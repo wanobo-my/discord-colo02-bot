@@ -6,7 +6,7 @@ import {
     Colors, 
     PermissionFlagsBits,
     User,
-    MessageFlags // 警告対策で追加
+    MessageFlags
 } from 'discord.js';
 
 export const data = new SlashCommandBuilder()
@@ -37,7 +37,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: CommandInteraction) {
     if (!interaction.isChatInputCommand()) return;
 
-    // Warning対策: ephemeral: true の代わりに flags を使用
+    // Ephemeral（自分だけに見える）設定
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const channel = interaction.channel;
@@ -59,34 +59,43 @@ export async function execute(interaction: CommandInteraction) {
         // メッセージを取得
         const targetMessage = await channel.messages.fetch(messageId);
         
-        // 【修正点】ここで毎回全員をfetchするとRate Limitにかかるため削除しました。
-        // Developer PortalでSERVER MEMBERS INTENTがONなら、自動的にキャッシュされます。
-        // await guild.members.fetch(); 
-
         // ----------------------------------------------------
-        // 1. 対象者の抽出
+        // 1. 対象者の抽出 (修正: キャッシュ漏れ対策)
         // ----------------------------------------------------
         const targetUsers = new Map<string, User>();
 
-        // @everyone / @here の処理
+        // (A) @everyone / @here の場合
         if (targetMessage.mentions.everyone) {
-            // cacheから取得します
+            // キャッシュを確認し、少なすぎる（Bot起動直後など）場合はFetchを試みる
+            if (guild.members.cache.size < guild.memberCount) {
+                try {
+                    await guild.members.fetch(); 
+                } catch (e) {
+                    console.warn('メンバー全取得時にエラー(RateLimit等)が発生しましたが、キャッシュのみで続行します。');
+                }
+            }
+
             guild.members.cache.forEach(member => {
+                // Botを除外 & このチャンネルを見れる権限がある人のみ
                 if (!member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel)) {
                     targetUsers.set(member.id, member.user);
                 }
             });
-        } else {
-            // ロールメンションの処理
-            targetMessage.mentions.roles.forEach(role => {
+        } 
+        // (B) ロールメンション / ユーザーメンション の場合
+        else {
+            // ロールメンション
+            // fetch() を使ってロールごとのメンバーを確実に取得する
+            for (const [roleId, role] of targetMessage.mentions.roles) {
+                await guild.members.fetch(); // 安全のため一度同期（ロールメンバー取得用）
                 role.members.forEach(member => {
-                    if (!member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel)) {
+                     if (!member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel)) {
                         targetUsers.set(member.id, member.user);
                     }
                 });
-            });
+            }
 
-            // ユーザーメンションの処理
+            // ユーザーメンション
             targetMessage.mentions.users.forEach(user => {
                 if (!user.bot) {
                     targetUsers.set(user.id, user);
@@ -94,7 +103,7 @@ export async function execute(interaction: CommandInteraction) {
             });
         }
 
-        // Bot自身を除外
+        // Bot自身を除外 (念のため)
         targetUsers.delete(interaction.client.user!.id);
 
         if (targetUsers.size === 0) {
@@ -103,23 +112,23 @@ export async function execute(interaction: CommandInteraction) {
         }
 
         // ----------------------------------------------------
-        // 2. 既読・未読の判定（エラー回避版）
+        // 2. 既読・未読の判定 (修正: 全リアクション取得)
         // ----------------------------------------------------
         const reactedUserIds = new Set<string>();
+        
+        // メッセージに付いている「全ての」リアクションを取得
         const reactions = targetMessage.reactions.cache;
         
-        // メッセージについている全てのリアクションを確認して回る
+        // リアクションごとにユーザーを取得してIDを記録
         for (const [_, reaction] of reactions) {
             try {
-                // リアクションした人たちのリストを取得
+                // リアクションを押したユーザーリストを取得 (APIリクエスト)
                 const users = await reaction.users.fetch();
-                
-                // 取得できた人を既読リストに追加
-                users.forEach(user => reactedUserIds.add(user.id));
-                
+                users.forEach(user => {
+                    reactedUserIds.add(user.id);
+                });
             } catch (error) {
-                // もし特定の絵文字でエラーが出ても、ログだけ出してBotは止めない
-                console.log(`一部のリアクション集計に失敗しましたが続行します: ${reaction.emoji.name}`);
+                console.log(`リアクション集計エラー (${reaction.emoji.name}):`, error);
             }
         }
 
@@ -155,7 +164,6 @@ export async function execute(interaction: CommandInteraction) {
                         inline: false 
                     }
                 )
-                // 空文字エラー対策 (nullにする)
                 .setDescription(targetMessage.mentions.everyone ? '※ @everyone / @here が含まれているため、閲覧可能な全メンバーを対象にしています。' : null)
                 .setFooter({ text: `Message ID: ${messageId}` })
                 .setTimestamp();
@@ -182,11 +190,10 @@ export async function execute(interaction: CommandInteraction) {
 📍チャンネル
 https://discord.com/channels/${guildId}/${channelId}/${messageId}
 
-⏰投稿日時
-${targetMessage.createdAt.toLocaleString('ja-JP')}
+⏰投稿日時: ${targetMessage.createdAt.toLocaleString('ja-JP')}
 
 💬メッセージ内容
-${targetMessage.content}
+${targetMessage.content.substring(0, 100)}${targetMessage.content.length > 100 ? '...' : ''}
 `;
 
             // 一人ずつDM送信
@@ -195,7 +202,7 @@ ${targetMessage.content}
                     await user.send(dmContent);
                     sentCount++;
                 } catch (e) {
-                    console.log(`${user.tag} へのDM送信失敗`);
+                    console.log(`${user.tag} へのDM送信失敗 (DM拒否設定など)`);
                 }
             }
 
