@@ -1,37 +1,62 @@
-import { Client, GatewayIntentBits, Interaction, TextChannel } from 'discord.js';
+import { Client, GatewayIntentBits, Interaction } from 'discord.js';
 import dotenv from 'dotenv';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import cron from 'node-cron'; // ✨ Cronを追加
+import cron from 'node-cron';
 import * as scheduleCommand from './commands/schedule.js';
 
 dotenv.config();
 
+// ポート設定
+const PORT = parseInt(process.env.PORT || '8000');
+
 // =====================================================
-// 🌍 1. Koyeb用 Webサーバー設定 (Hono)
+// 🌍 1. Hono Webサーバー設定 (ご提示のコードを統合)
 // =====================================================
 const app = new Hono();
 
-// UptimeRobotなどがアクセスする場所
-app.get('/', (c) => c.text('Bot is active!'));
+// ヘルスチェック用のエンドポイント
+app.get("/", (c) => {
+  return c.json({
+    status: "ok",
+    message: "Discord Bot is running",
+    node_version: process.version,
+    timestamp: new Date().toISOString(),
+  });
+});
 
-const port = parseInt(process.env.PORT || '8000');
-console.log(`Server is running on port ${port}`);
+console.log(`Server is running on port ${PORT}`);
 
 serve({
   fetch: app.fetch,
-  port: port
+  port: PORT
 });
 
 // =====================================================
-// ⏰ 2. 定期実行設定 (Cron)
+// ⏰ 2. 定期実行設定 (ご提示のコードを統合)
 // =====================================================
-// 例: 5分ごとにログを表示（ここに「定期リクエスト」の処理を書けます）
-cron.schedule('*/5 * * * *', () => {
-    console.log('⏰ Cron: 5分経過。Botは正常に稼働中です。');
+// 環境変数 HEALTH_CHECK_URL があればそれを、なければ localhost を使う
+const HEALTH_CHECK_URL = process.env.HEALTH_CHECK_URL || `http://localhost:${PORT}`;
+
+console.log(`🕐 ヘルスチェックの定期実行を開始しました (10分間隔) - Target: ${HEALTH_CHECK_URL}`);
+
+// 10分ごとにヘルスチェックを実行
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    console.log(`🔍 [${now}] ヘルスチェック実行中... (${HEALTH_CHECK_URL})`);
     
-    // もし「自分自身にリクエストを送る」ならここで fetch を使います
-    // fetch('https://あなたのアプリ.koyeb.app/'); 
+    const response = await fetch(HEALTH_CHECK_URL);
+
+    if (response.ok) {
+      console.log(`✅ [${now}] ヘルスチェック成功: ${response.status}`);
+    } else {
+      console.warn(`⚠️ [${now}] ヘルスチェック失敗: ${response.status}`);
+    }
+  } catch (error) {
+    const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    console.error(`❌ [${now}] ヘルスチェックエラー:`, error);
+  }
 });
 
 // =====================================================
