@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Interaction } from 'discord.js';
+import { Client, GatewayIntentBits, Interaction, Events } from 'discord.js';
 import dotenv from 'dotenv';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -98,6 +98,27 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
         } else {
             await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+        }
+    }
+});
+client.on(Events.MessageCreate, async message => {
+    // Bot自身の発言や、Botによる発言は無視
+    if (message.author.bot) return;
+
+    // Botがメンションに含まれているかチェック
+    if (message.mentions.users.has(client.user!.id)) {
+        try {
+            // ランダムで選ぶリアクションのリスト
+            const emojis = ['👀', '❤️', '👍', '🙋‍♀️', '🌱', '🤖', '✒️', '🍀', '😎'];
+            
+            // ランダムに1つ選ぶ
+            const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+
+            // 選ばれたリアクションをつける
+            await message.react(randomEmoji);
+            
+        } catch (error) {
+            console.error('リアクションの追加に失敗しました:', error);
         }
     }
 });
