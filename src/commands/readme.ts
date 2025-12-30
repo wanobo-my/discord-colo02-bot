@@ -1,0 +1,215 @@
+import { 
+    SlashCommandBuilder, 
+    CommandInteraction, 
+    TextChannel, 
+    EmbedBuilder, 
+    Colors, 
+    PermissionFlagsBits,
+    User,
+    MessageFlags // 警告対策で追加
+} from 'discord.js';
+
+export const data = new SlashCommandBuilder()
+    .setName('readme')
+    .setDescription('既読管理を行います（管理者専用）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand(subcommand =>
+        subcommand
+            .setName('check')
+            .setDescription('指定したメッセージの既読状況を確認します')
+            .addStringOption(option => 
+                option.setName('message_id')
+                .setDescription('確認したいメッセージのID')
+                .setRequired(true)
+            )
+    )
+    .addSubcommand(subcommand =>
+        subcommand
+            .setName('remind')
+            .setDescription('指定したメッセージの未読者にリマインドを送信します')
+            .addStringOption(option => 
+                option.setName('message_id')
+                .setDescription('リマインドを送りたいメッセージのID')
+                .setRequired(true)
+            )
+    );
+
+export async function execute(interaction: CommandInteraction) {
+    if (!interaction.isChatInputCommand()) return;
+
+    // Warning対策: ephemeral: true の代わりに flags を使用
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const channel = interaction.channel;
+    if (!channel || !(channel instanceof TextChannel)) {
+        await interaction.editReply('このコマンドはテキストチャンネルでのみ使用可能です。');
+        return;
+    }
+
+    const subcommand = interaction.options.getSubcommand();
+    const messageId = interaction.options.getString('message_id', true);
+    const guild = interaction.guild;
+
+    if (!guild) {
+        await interaction.editReply('サーバー情報の取得に失敗しました。');
+        return;
+    }
+
+    try {
+        // メッセージを取得
+        const targetMessage = await channel.messages.fetch(messageId);
+        
+        // 【修正点】ここで毎回全員をfetchするとRate Limitにかかるため削除しました。
+        // Developer PortalでSERVER MEMBERS INTENTがONなら、自動的にキャッシュされます。
+        // await guild.members.fetch(); 
+
+        // ----------------------------------------------------
+        // 1. 対象者の抽出
+        // ----------------------------------------------------
+        const targetUsers = new Map<string, User>();
+
+        // @everyone / @here の処理
+        if (targetMessage.mentions.everyone) {
+            // cacheから取得します
+            guild.members.cache.forEach(member => {
+                if (!member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel)) {
+                    targetUsers.set(member.id, member.user);
+                }
+            });
+        } else {
+            // ロールメンションの処理
+            targetMessage.mentions.roles.forEach(role => {
+                role.members.forEach(member => {
+                    if (!member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel)) {
+                        targetUsers.set(member.id, member.user);
+                    }
+                });
+            });
+
+            // ユーザーメンションの処理
+            targetMessage.mentions.users.forEach(user => {
+                if (!user.bot) {
+                    targetUsers.set(user.id, user);
+                }
+            });
+        }
+
+        // Bot自身を除外
+        targetUsers.delete(interaction.client.user!.id);
+
+        if (targetUsers.size === 0) {
+            await interaction.editReply('このメッセージの対象となるメンバーが見つかりませんでした。\n（Bot起動直後はメンバーリストの読み込みに時間がかかる場合があります）');
+            return;
+        }
+
+        // ----------------------------------------------------
+        // 2. 既読・未読の判定（エラー回避版）
+        // ----------------------------------------------------
+        const reactedUserIds = new Set<string>();
+        const reactions = targetMessage.reactions.cache;
+        
+        // メッセージについている全てのリアクションを確認して回る
+        for (const [_, reaction] of reactions) {
+            try {
+                // リアクションした人たちのリストを取得
+                const users = await reaction.users.fetch();
+                
+                // 取得できた人を既読リストに追加
+                users.forEach(user => reactedUserIds.add(user.id));
+                
+            } catch (error) {
+                // もし特定の絵文字でエラーが出ても、ログだけ出してBotは止めない
+                console.log(`一部のリアクション集計に失敗しましたが続行します: ${reaction.emoji.name}`);
+            }
+        }
+
+        // 振り分け
+        const readUsers: string[] = [];
+        const unreadUsers: User[] = [];
+
+        targetUsers.forEach(user => {
+            if (reactedUserIds.has(user.id)) {
+                readUsers.push(user.toString());
+            } else {
+                unreadUsers.push(user);
+            }
+        });
+
+        // ----------------------------------------------------
+        // 3. 結果の処理 (check / remind)
+        // ----------------------------------------------------
+        
+        if (subcommand === 'check') {
+            const embed = new EmbedBuilder()
+                .setTitle('📋 既読状況確認')
+                .setColor(Colors.Blue)
+                .addFields(
+                    { 
+                        name: `✅ 既読 (${readUsers.length}人)`, 
+                        value: readUsers.length > 0 ? readUsers.join('\n') : 'なし',
+                        inline: false 
+                    },
+                    { 
+                        name: `❌ 未読 (${unreadUsers.length}人)`, 
+                        value: unreadUsers.length > 0 ? unreadUsers.map(u => u.toString()).join('\n') : 'なし', 
+                        inline: false 
+                    }
+                )
+                // 空文字エラー対策 (nullにする)
+                .setDescription(targetMessage.mentions.everyone ? '※ @everyone / @here が含まれているため、閲覧可能な全メンバーを対象にしています。' : null)
+                .setFooter({ text: `Message ID: ${messageId}` })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } 
+        
+        else if (subcommand === 'remind') {
+            if (unreadUsers.length === 0) {
+                await interaction.editReply('未読者はいないため、リマインドは送信しませんでした。');
+                return;
+            }
+
+            let sentCount = 0;
+            const guildId = interaction.guildId;
+            const channelId = channel.id;
+
+            const dmContent = `
+**📝未読メッセージのお知らせ！**
+以下のメッセージはもう読みましたか？
+確認したらチャンネルで該当メッセージに
+リアクションをポチッとお願いします！
+
+📍チャンネル
+https://discord.com/channels/${guildId}/${channelId}/${messageId}
+
+⏰投稿日時
+${targetMessage.createdAt.toLocaleString('ja-JP')}
+
+💬メッセージ内容
+${targetMessage.content}
+`;
+
+            // 一人ずつDM送信
+            for (const user of unreadUsers) {
+                try {
+                    await user.send(dmContent);
+                    sentCount++;
+                } catch (e) {
+                    console.log(`${user.tag} へのDM送信失敗`);
+                }
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle('✅ 成功')
+                .setColor(Colors.Green)
+                .setDescription(`未読者 ${sentCount}名 にリマインドを送信しました。`)
+                .setFooter({ text: `対象人数: ${unreadUsers.length}人 (送信失敗: ${unreadUsers.length - sentCount}人)` });
+
+            await interaction.editReply({ embeds: [embed] });
+        }
+
+    } catch (error) {
+        console.error(error);
+        await interaction.editReply('エラーが発生しました。時間を置いて再試行するか、メッセージIDを確認してください。');
+    }
+}
