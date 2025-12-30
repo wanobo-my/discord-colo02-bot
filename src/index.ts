@@ -4,6 +4,8 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import cron from 'node-cron';
 import * as scheduleCommand from './commands/schedule.js';
+import * as helloCommand from './commands/hello.js'; 
+import * as readmeCommand from './commands/readme.js';
 
 dotenv.config();
 
@@ -79,8 +81,24 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
     const { commandName } = interaction;
 
-    if (commandName === 'schedule') {
-        await scheduleCommand.execute(interaction);
+    // ▼▼▼ 各ファイルの中にある execute() を呼び出します ▼▼▼
+    try {
+        if (commandName === 'schedule') {
+            await scheduleCommand.execute(interaction);
+        } 
+        else if (commandName === 'hello') {
+            await helloCommand.execute(interaction);
+        }
+        else if (commandName === 'readme') {
+            await readmeCommand.execute(interaction);
+        }
+    } catch (error) {
+        console.error(error);
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+        } else {
+            await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+        }
     }
 });
 
