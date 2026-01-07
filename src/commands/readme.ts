@@ -58,9 +58,14 @@ export async function execute(interaction: CommandInteraction) {
         // メッセージを取得
         const targetMessage = await channel.messages.fetch(messageId);
         
-        // 【重要】メンバー情報を最新にする（ロールを持っている人を正確に把握するため）
-        // ※人数が多いサーバーだと少し時間がかかる場合があります
-        await guild.members.fetch();
+        // 【修正】メンバー情報を最新にする（レートリミット対策付き）
+        try {
+            // 最新の名簿を取りに行く
+            await guild.members.fetch();
+        } catch (error) {
+            // 短期間に連打して制限にかかった場合は、エラーにせず手持ちのデータ(キャッシュ)を使う
+            console.log('メンバーリストの取得頻度制限中ですが、キャッシュを使用して続行します。');
+        }
 
         // ----------------------------------------------------
         // ▼▼▼ 対象者の抽出ロジック（ここを強化！） ▼▼▼
