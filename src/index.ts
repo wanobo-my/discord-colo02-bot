@@ -68,7 +68,9 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions, // リアクションを見る能力
+        GatewayIntentBits.GuildMembers           // メンバー名簿を見る能力
     ]
 });
 
