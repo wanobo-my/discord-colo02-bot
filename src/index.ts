@@ -62,11 +62,11 @@ cron.schedule("*/10 * * * *", async () => {
 });
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
-cron.schedule("20 3 10 * *", async () => {
+cron.schedule("36 3 10 * *", async () => {
     console.log("📅 (テスト中)月初の予定通知を実行します...");
 
     //const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
-    const NOTIFY_CHANNEL_ID = "1358458777589780732";
+    const NOTIFY_CHANNEL_ID = "1224642207978491997";
 
     const SCHEDULE_SHEET_URL = process.env.SCHEDULE_SHEET_URL;
     const GAS_API_URL = process.env.GAS_API_URL;
@@ -141,9 +141,12 @@ cron.schedule("20 3 10 * *", async () => {
                 .setTimestamp();
 
             events.forEach((e: any) => {
+                // ✨ 1. (数字) を (数字回目) に書き換える処理
+                // GASから来た "施設名 (3)" という文字の、最後の "(3)" だけを見つけて加工します
+                const placeFormatted = e.place.replace(/\((\d+)\)$/, '($1回目)');
                 embed.addFields({
-                    name: `🎵 ${e.date} ${e.time}`,
-                    value: `📍 **場所**: ${e.place}\n👥 **メンバー**: ${e.member}`,
+                    name: `${e.date} ${e.time}`,
+                    value: `📍 **場所**: ${placeFormatted}\n👥 **メンバー**: ${e.member}\n────────────────`,
                     inline: false
                 });
             });
