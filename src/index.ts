@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Interaction, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Interaction, Events, EmbedBuilder, TextChannel } from 'discord.js';
 import dotenv from 'dotenv';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -62,7 +62,7 @@ cron.schedule("*/10 * * * *", async () => {
 });
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
-cron.schedule("54 2 10 * *", async () => {
+cron.schedule("10 3 10 * *", async () => {
     console.log("📅 (テスト中)月初の予定通知を実行します...");
 
     //const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
@@ -109,7 +109,7 @@ cron.schedule("54 2 10 * *", async () => {
         // ------------------------------------------------
         const count = events.length;
         const targetRole = "<@&1374042129201893396>";
-        let messageText = `おはようございます！今月のコンサートは${count}件です！\n`;
+        let messageText = `${targetRole}\nおはようございます！今月のコンサートは${count}件です！\n`;
 
         if (count === 0) {
             messageText += "今月の予定はまだありません。練習期間ですね！☕";
