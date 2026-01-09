@@ -62,11 +62,12 @@ cron.schedule("*/10 * * * *", async () => {
 });
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
-cron.schedule("36 3 10 * *", async () => {
-    console.log("📅 (テスト中)月初の予定通知を実行します...");
+// Cron式: 0 9 1 * * = 毎月1日の 9:00
+cron.schedule("0 9 10 * *", async () => {
+    console.log("📅 月初の予定通知を実行します...");
 
-    //const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
-    const NOTIFY_CHANNEL_ID = "1224642207978491997";
+    const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
+    //const NOTIFY_CHANNEL_ID = "1224642207978491997";
 
     const SCHEDULE_SHEET_URL = process.env.SCHEDULE_SHEET_URL;
     const GAS_API_URL = process.env.GAS_API_URL;
@@ -109,22 +110,22 @@ cron.schedule("36 3 10 * *", async () => {
         // ------------------------------------------------
         const count = events.length;
         const targetRole = "<@&1374042129201893396>";
-        let messageText = `${targetRole}\nおはようございます！今月のコンサートは${count}件です！\n`;
+        let messageText = `${targetRole}\nオハヨウゴザイマス！今月のコンサートは${count}件デス！\n`;
 
         if (count === 0) {
-            messageText += "今月の予定はまだありません。練習期間ですね！☕";
+            messageText += "今月の予定はまだありません。練習期間デスネ！☕";
         } else if (count === 1) {
-            messageText += "1件を丁寧に楽しく準備しましょう！笑顔で^_^";
+            messageText += "1件を丁寧に楽しく準備シマショウ！笑顔で^_^";
         } else if (count === 2) {
-            messageText += "少しゆったりモード！しっかり準備して楽しみましょう✌️";
+            messageText += "少しゆったりモード！しっかり準備シテ楽しみマショウ✌️";
         } else if (count === 3) {
-            messageText += "今月もがんばりましょー！🤖";
+            messageText += "今月もガンバリマショー！🤖";
         } else if (count === 4) {
-            messageText += "たくさん依頼があります！準備大切に🌱";
+            messageText += "たくさん依頼がアリマス！準備大切に🌱";
         } else if (count === 5) {
-            messageText += "忙しくなりそうです...！楽しみつつがんばりましょう💪";
+            messageText += "忙しくなりそうデス...！楽しみつつがんばりマショウ💪";
         } else { // 6件以上
-            messageText += "color大人気です💥 がんばろう〜〜٩( ᐛ )و";
+            messageText += "color大人気デス💥 ガンバロ〜〜٩( ᐛ )و";
         }
 
         // ------------------------------------------------
