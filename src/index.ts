@@ -63,7 +63,7 @@ cron.schedule("*/10 * * * *", async () => {
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
 // Cron式: 0 9 1 * * = 毎月1日の 9:00
-cron.schedule("0 9 10 * *", async () => {
+cron.schedule("0 9 1 * *", async () => {
     console.log("📅 月初の予定通知を実行します...");
 
     const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
