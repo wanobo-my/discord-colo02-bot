@@ -164,6 +164,37 @@ cron.schedule("0 9 1 * *", async () => {
 });
 
 // =====================================================
+// (3) 🤖 月末のスプレッドシート更新リマインダー (毎月28日 AM9:00)
+// =====================================================
+cron.schedule("05 22 12 * *", async () => {
+    console.log("📅 月末のリマインダーを実行します...");
+
+    // ご指定いただいたチャンネルID
+    const REMIND_CHANNEL_ID = "1358406882208780482";
+
+    try {
+        const channel = await client.channels.fetch(REMIND_CHANNEL_ID) as TextChannel;
+        if (!channel) return;
+
+        // 🤖 フランクなロボット風メッセージ
+        const messageText = `ピピピッ！🤖 そろそろ来月になっちゃいマス！
+TimeTreeの予定をスプレッドシートに転記シマショウ⚡️
+あとで焦らないように、今のうちにサクッと更新しておくのがオススメデース！
+
+[✏︎今すぐ入力する](https://docs.google.com/spreadsheets/d/107NQnqETbr4COKh4DPyIkabcd3CkwbT6UgRLYtG4IHQ/edit?usp=drivesdk)
+
+よろしく頼むヨー！⚙️`;
+
+        await channel.send(messageText);
+        
+    } catch (error) {
+        console.error("❌ リマインダー通知のエラー:", error);
+    }
+}, {
+    timezone: "Asia/Tokyo"
+});
+
+// =====================================================
 // 🤖 3. Discord Bot設定
 // =====================================================
 const client = new Client({
