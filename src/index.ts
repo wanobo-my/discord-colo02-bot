@@ -6,6 +6,10 @@ import cron from 'node-cron';
 import * as scheduleCommand from './commands/schedule.js';
 import * as helloCommand from './commands/hello.js'; 
 import * as readmeCommand from './commands/readme.js';
+import * as concertCommand from './commands/concert.js';
+import { getExecutableJobs, updateJob } from './services/reminderJobs.js';
+import { checkIncompleteUsers, generateTallyEmbed, USER_MAP } from './commands/schedule.js';
+import { toJstIsoString, getJstNow } from './utils/date.js';
 
 dotenv.config();
 
@@ -195,6 +199,120 @@ TimeTreeの予定をスプレッドシートに転記シマショウ⚡️
 });
 
 // =====================================================
+// ⏰ (4) 自動ジョブの定期巡回 (1時間ごと)
+// =====================================================
+cron.schedule("0 * * * *", async () => {
+    console.log("⏰ [cron] 自動ジョブの巡回を開始します...");
+    await processReminderJobs();
+}, {
+    timezone: "Asia/Tokyo"
+});
+
+/**
+ * 実行期限の過ぎた pending ジョブを処理します。
+ */
+async function processReminderJobs() {
+    try {
+        const jobs = await getExecutableJobs();
+        if (jobs.length === 0) {
+            console.log("⏰ [cron] 実行対象のジョブはありませんでした。");
+            return;
+        }
+
+        console.log(`⏰ [cron] ${jobs.length} 件のジョブを実行します。`);
+
+        for (const job of jobs) {
+            console.log(`⏰ [cron] ジョブ実行開始 - ID: ${job.jobId}, Type: ${job.jobType}, Event: ${job.eventName}`);
+            
+            if (!job.rowNumber) {
+                console.error(`❌ ジョブの行番号が不明です。ID: ${job.jobId}`);
+                continue;
+            }
+
+            // 1. 二重実行防止のためにステータスを running に更新
+            try {
+                await updateJob(job.rowNumber, { status: 'running' });
+            } catch (err: any) {
+                console.error(`❌ ジョブステータスを running に更新できませんでした:`, err.message);
+                continue;
+            }
+
+            try {
+                const gasUrl = process.env.GAS_API_URL;
+                if (!gasUrl) throw new Error("GAS_API_URL が設定されていません。");
+
+                // Discordのチャンネルを取得
+                const channel = await client.channels.fetch(job.channelId) as TextChannel;
+                if (!channel) throw new Error(`チャンネルが見つかりません。ID: ${job.channelId}`);
+
+                if (job.jobType === 'schedule_remind_before' || job.jobType === 'schedule_remind_deadline') {
+                    // 未回答チェック
+                    const result = await checkIncompleteUsers(gasUrl, job.sheetUrl);
+                    
+                    if (result.names.length === 0) {
+                        // 全員回答済み
+                        const embed = new EmbedBuilder()
+                            .setTitle(`🎉 「${job.eventName}」は全員回答済みです！`)
+                            .setColor(0x00FF00) // Green
+                            .setDescription('みんな協力ありがとう！');
+                        await channel.send({ embeds: [embed] });
+                    } else {
+                        // 未回答者がいる場合
+                        const mentions = result.names.map(name => USER_MAP[name] ? `<@${USER_MAP[name]}>` : name);
+                        const mentionString = mentions.join(' ');
+                        
+                        let title = '📣 リマインド・回答してね！';
+                        let desc = `「${job.eventName}」の回答締切は明日です。\n未回答の人は、シートを確認して入力をお願いします！`;
+                        
+                        if (job.jobType === 'schedule_remind_deadline') {
+                            title = '📣 最終リマインド・回答お願いします！';
+                            desc = `「${job.eventName}」の回答締切は今日です。\nまだ未回答の人は、今日中に入力をお願いします！`;
+                        }
+
+                        const embed = new EmbedBuilder()
+                            .setTitle(title)
+                            .setColor(0xFFA500) // Orange
+                            .setDescription(`${desc}\n\n${mentionString}\n\n**📎 シートURL**\n[クリックして回答する](${job.sheetUrl})`)
+                            .setFooter({ text: `未回答: ${result.names.length}名` })
+                            .setTimestamp();
+                        
+                        await channel.send({ content: mentionString, embeds: [embed] });
+                    }
+                } 
+                else if (job.jobType === 'schedule_finish') {
+                    // 自動集計
+                    const embed = await generateTallyEmbed(gasUrl, job.sheetUrl);
+                    await channel.send({ embeds: [embed] });
+                }
+                else {
+                    throw new Error(`未知のジョブタイプです: ${job.jobType}`);
+                }
+
+                // 成功したら done に更新
+                const nowJstStr = toJstIsoString(getJstNow());
+                await updateJob(job.rowNumber, {
+                    status: 'done',
+                    executedAt: nowJstStr
+                });
+                console.log(`✅ [cron] ジョブ実行完了 - ID: ${job.jobId}`);
+
+            } catch (error: any) {
+                console.error(`❌ [cron] ジョブ実行エラー - ID: ${job.jobId}:`, error.message);
+                
+                // 失敗時は error に更新
+                await updateJob(job.rowNumber, {
+                    status: 'error',
+                    errorMessage: error.message,
+                    retryCount: job.retryCount + 1
+                });
+            }
+        }
+    } catch (err: any) {
+        console.error("❌ [cron] 巡回処理全体のエラー:", err.message);
+    }
+}
+
+// =====================================================
 // 🤖 3. Discord Bot設定
 // =====================================================
 const client = new Client({
@@ -212,28 +330,56 @@ client.once('ready', () => {
 });
 
 client.on('interactionCreate', async (interaction: Interaction) => {
-    if (!interaction.isCommand()) return;
+    // 1. スラッシュコマンドの処理
+    if (interaction.isCommand()) {
+        const { commandName } = interaction;
 
-    const { commandName } = interaction;
+        try {
+            if (commandName === 'schedule') {
+                await scheduleCommand.execute(interaction);
+            } 
+            else if (commandName === 'hello') {
+                await helloCommand.execute(interaction);
+            }
+            else if (commandName === 'readme') {
+                await readmeCommand.execute(interaction);
+            }
+            else if (commandName === 'concert') {
+                await concertCommand.execute(interaction);
+            }
+        } catch (error) {
+            console.error(error);
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+            }
+        }
+        return;
+    }
 
-    // ▼▼▼ 各ファイルの中にある execute() を呼び出します ▼▼▼
-    try {
-        if (commandName === 'schedule') {
-            await scheduleCommand.execute(interaction);
-        } 
-        else if (commandName === 'hello') {
-            await helloCommand.execute(interaction);
+    // 2. モーダル送信の処理
+    if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith('concert_')) {
+            await concertCommand.handleModalSubmit(interaction);
         }
-        else if (commandName === 'readme') {
-            await readmeCommand.execute(interaction);
+        return;
+    }
+
+    // 3. ユーザー選択メニューの処理
+    if (interaction.isUserSelectMenu()) {
+        if (interaction.customId.startsWith('concert_')) {
+            await concertCommand.handleUserSelect(interaction);
         }
-    } catch (error) {
-        console.error(error);
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
-        } else {
-            await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+        return;
+    }
+
+    // 4. ボタンクリックの処理
+    if (interaction.isButton()) {
+        if (interaction.customId.startsWith('concert_')) {
+            await concertCommand.handleButton(interaction);
         }
+        return;
     }
 });
 client.on(Events.MessageCreate, async message => {
