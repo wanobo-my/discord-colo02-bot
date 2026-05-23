@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Interaction, Events, EmbedBuilder, TextChannel } from 'discord.js';
+import { Client, GatewayIntentBits, Interaction, Events, EmbedBuilder, TextChannel, ThreadChannel } from 'discord.js';
 import dotenv from 'dotenv';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -8,6 +8,7 @@ import * as helloCommand from './commands/hello.js';
 import * as readmeCommand from './commands/readme.js';
 import * as concertCommand from './commands/concert.js';
 import { getExecutableJobs, updateJob } from './services/reminderJobs.js';
+import { getAllConcertThreads, updateConcertThread } from './services/concertService.js';
 import { checkIncompleteUsers, generateTallyEmbed, USER_MAP } from './commands/schedule.js';
 import { toJstIsoString, getJstNow } from './utils/date.js';
 
@@ -403,6 +404,108 @@ client.on(Events.MessageCreate, async message => {
         }
     }
 });
+
+// =====================================================
+// 🏷️ (5) 手動でのフォーラムスレッドタグ更新の同期
+// =====================================================
+client.on(Events.ThreadUpdate, async (oldThread, newThread) => {
+    const forumChannelId = process.env.CONCERT_FORUM_CHANNEL_ID;
+    if (!forumChannelId || newThread.parentId !== forumChannelId) return;
+
+    const doneTagId = process.env.CONCERT_TAG_DONE_ID;
+    if (!doneTagId) return;
+
+    // タグが「終了」に変更されたかを検知
+    const wasDone = oldThread.appliedTags.includes(doneTagId);
+    const isDone = newThread.appliedTags.includes(doneTagId);
+
+    if (!wasDone && isDone) {
+        console.log(`ℹ️ [threadUpdate] スレッド ID: ${newThread.id} のタグが手動で「終了」に更新されました。`);
+
+        // スプレッドシートから対象のレコードを検索
+        const allConcerts = await getAllConcertThreads();
+        const concert = allConcerts.find(c => c.threadId === newThread.id);
+        
+        // すでに done になっている二重送信を防ぐ
+        if (concert && concert.status === 'planned' && concert.rowNumber) {
+            try {
+                // スプレッドシートのステータスを更新
+                await updateConcertThread(concert.rowNumber, { status: 'done' });
+                
+                // 活動報告フォームを自動投稿
+                await concertCommand.postActivityForm(newThread as ThreadChannel);
+            } catch (error: any) {
+                console.error(`❌ [threadUpdate] 手動終了同期エラー:`, error.message);
+            }
+        }
+    }
+});
+
+// =====================================================
+// ⏰ (6) 当日コンサートの自動終了・フォーム投稿 (毎日 17:00)
+// =====================================================
+cron.schedule("0 17 * * *", async () => {
+    console.log("⏰ [cron] 当日コンサートの自動終了処理を開始します...");
+    try {
+        await autoCloseConcertsForToday();
+    } catch (error: any) {
+        console.error("❌ 当日コンサート自動終了処理のエラー:", error.message);
+    }
+}, {
+    timezone: "Asia/Tokyo"
+});
+
+/**
+ * 本日実施予定のコンサートについて、自動的にステータスを終了に変更し、
+ * タグの更新および活動報告フォームの自動投稿を行います。
+ */
+async function autoCloseConcertsForToday() {
+    const allConcerts = await getAllConcertThreads();
+    const now = getJstNow();
+    
+    // 比較用日付文字列 (YYYY.MM.DD および YYYY-MM-DD)
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const todayDot = `${yyyy}.${mm}.${dd}`;
+    const todayDash = `${yyyy}-${mm}-${dd}`;
+    
+    const todaysConcerts = allConcerts.filter(c => 
+        c.status === 'planned' && 
+        (c.concertDate.trim() === todayDot || c.concertDate.trim() === todayDash)
+    );
+
+    if (todaysConcerts.length === 0) {
+        console.log("⏰ [cron] 本日実施予定の未終了コンサートはありません。");
+        return;
+    }
+
+    console.log(`⏰ [cron] ${todaysConcerts.length} 件のコンサートを自動終了処理します...`);
+
+    for (const concert of todaysConcerts) {
+        if (!concert.rowNumber) continue;
+
+        try {
+            // 1. スプレッドシート更新
+            await updateConcertThread(concert.rowNumber, { status: 'done' });
+
+            // 2. Discord側の処理 (タグ変更 & フォーム投稿)
+            const thread = await client.channels.fetch(concert.threadId);
+            if (thread && thread instanceof ThreadChannel) {
+                const doneTagId = process.env.CONCERT_TAG_DONE_ID;
+                if (doneTagId) {
+                    await thread.setAppliedTags([doneTagId]);
+                }
+                
+                // 活動報告フォームを自動投稿
+                await concertCommand.postActivityForm(thread);
+            }
+            console.log(`✅ [cron] コンサート「${concert.title}」を自動終了しました。`);
+        } catch (error: any) {
+            console.error(`❌ [cron] コンサート「${concert.title}」の自動終了エラー:`, error.message);
+        }
+    }
+}
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) {

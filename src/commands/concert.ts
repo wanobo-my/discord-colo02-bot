@@ -437,8 +437,12 @@ export async function handleButton(interaction: ButtonInteraction) {
             // セッションクリア
             createSessions.delete(interaction.user.id);
 
-            // コマンド使用者に見える元のプレビューメッセージを削除して画面をクリーンにする
-            await interaction.deleteReply();
+            // コマンド使用者に見えるメッセージを投稿完了通知で上書きする
+            await interaction.editReply({ 
+                content: `🎉 コンサートのフォーラム投稿を作成しました！スレッド: <#${thread.id}>`, 
+                embeds: [], 
+                components: [] 
+            });
         } catch (error: any) {
             console.error('Post error:', error);
             await interaction.editReply({ content: `❌ 投稿失敗: ${error.message}`, embeds: [], components: [] });
@@ -643,13 +647,7 @@ export async function handleButton(interaction: ButtonInteraction) {
                 await syncThreadMessage(interaction.client, threadId);
 
                 // Phase 3: 活動後フォーム自動投稿
-                const activityFormUrl = process.env.ACTIVITY_FORM_URL;
-                if (activityFormUrl) {
-                    const formMessage = `【活動記録フォーム入力のお願い】\n\n本日参加したみなさん、おつかれさまでした！\n今後の活動報告や記録整理のため、活動記録フォームへの入力をお願いします。\n\nフォーム：${activityFormUrl}`;
-                    await thread.send(formMessage);
-                } else {
-                    console.log('⚠️ [Phase 3] ACTIVITY_FORM_URL が設定されていないため、活動後フォーム自動投稿をスキップしました。');
-                }
+                await postActivityForm(thread);
             }
             await interaction.editReply('✅ ステータスを「終了」にし、タグを更新しました。活動後フォームも自動投稿しました。');
         } catch (error: any) {
@@ -737,4 +735,17 @@ async function syncThreadMessage(client: any, threadId: string): Promise<void> {
     } catch (error) {
         console.error('Sync thread message failed:', error);
     }
+}
+
+/**
+ * 指定されたスレッドへ活動記録フォームのリンクを自動投稿します。
+ */
+export async function postActivityForm(thread: ThreadChannel): Promise<void> {
+    const defaultUrl = 'https://docs.google.com/forms/d/e/1FAIpQLSdKkOzdnoQi8c8-nta7cvP0XiEEYzx-sRJd7cewetZKNJdgKA/viewform?usp=publish-editor';
+    const formUrl = process.env.ACTIVITY_FORM_URL || defaultUrl;
+    
+    const formMessage = `**🌷活動記録フォームのお願い**\n今日もおつかれさまでした！\n↓今後の活動報告や記録整理のための記録はこちらから\n${formUrl}`;
+    
+    await thread.send(formMessage);
+    console.log(`✅ [Phase 3] スレッド ID: ${thread.id} に活動記録フォームを自動投稿しました。`);
 }
