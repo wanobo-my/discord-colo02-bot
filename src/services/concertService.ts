@@ -247,3 +247,51 @@ export async function updateConcertThread(
         throw error;
     }
 }
+
+/**
+ * すべてのコンサート情報を取得します。
+ */
+export async function getAllConcertThreads(): Promise<ConcertThread[]> {
+    await ensureHeader();
+
+    try {
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID!,
+            range: `${SHEET_NAME}!A:P`,
+        });
+
+        const rows = response.data.values;
+        if (!rows || rows.length <= 1) return [];
+
+        const list: ConcertThread[] = [];
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            const paddedRow = row.concat(Array(HEADERS.length - row.length).fill(''));
+
+            list.push({
+                concertId: paddedRow[0],
+                threadId: paddedRow[1],
+                starterMessageId: paddedRow[2],
+                forumChannelId: paddedRow[3],
+                title: paddedRow[4],
+                concertDate: paddedRow[5],
+                facilityName: paddedRow[6],
+                time: paddedRow[7],
+                meeting: paddedRow[8],
+                participantIds: paddedRow[9],
+                photoPolicy: paddedRow[10],
+                note: paddedRow[11],
+                status: paddedRow[12],
+                createdBy: paddedRow[13],
+                createdAt: paddedRow[14],
+                updatedAt: paddedRow[15],
+                rowNumber: i + 1
+            });
+        }
+
+        return list;
+    } catch (error: any) {
+        console.error('❌ [ConcertThreads] 全コンサート取得エラー:', error.message);
+        return [];
+    }
+}
