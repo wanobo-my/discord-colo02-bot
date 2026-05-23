@@ -339,7 +339,7 @@ export async function handleButton(interaction: ButtonInteraction) {
         }
 
         // ポリシーIDの抽出 (例: 'concert_btn_photo_ok' -> 'photo_ok')
-        const policyKey = customId.replace('concert_btn_photo_', '');
+        const policyKey = customId.replace('concert_btn_', '');
         session.photoPolicy = PHOTO_POLICIES[policyKey] || '📷 写真撮影：要確認';
         createSessions.set(interaction.user.id, session);
 

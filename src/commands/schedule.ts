@@ -126,7 +126,10 @@ export async function execute(interaction: CommandInteraction) {
                     .setDescription(descriptionText)
                     .setFooter({ text: '🤖 自動リマインド・集計がスケジュールされました。' })
                     .setTimestamp();
-                await interaction.editReply({ embeds: [embed] });
+                await interaction.editReply({ 
+                    content: '<@&1374042129201893396> 新しい日程調整シートが作成されました。回答をお願いします！', 
+                    embeds: [embed] 
+                });
             } else {
                 throw new Error(result.message);
             }
@@ -181,7 +184,10 @@ export async function execute(interaction: CommandInteraction) {
 
         try {
             const embed = await generateTallyEmbed(gasUrl, sheetUrl);
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ 
+                content: '<@&1374042129201893396> 日程調整の集計結果です！', 
+                embeds: [embed] 
+            });
         } catch (error: any) {
             console.error(error);
             await interaction.editReply(`❌ 集計失敗: ${error.message}`);
@@ -246,10 +252,9 @@ export async function generateTallyEmbed(gasUrl: string, sheetUrl: string): Prom
     const embed = new EmbedBuilder()
         .setTitle('📊 日程集計結果')
         .setColor(Colors.Blue)
-        .setDescription('「◯」と「△」の回答状況一覧です。\n※敬称略')
         .setTimestamp();
 
-    let resultText = "";
+    let resultText = "みんな回答ありがとうございました！\n\n「◯」と「△」の回答状況一覧です。\n※敬称略\n----------------\n";
 
     tallyData.forEach(item => {
         if (item.o.length === 0 && item.tri.length === 0) return;
