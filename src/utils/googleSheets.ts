@@ -3,8 +3,14 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 改行コードの修正
-const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+// 改行コードの修正および前後のダブルクォーテーション削除
+let rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+if (rawPrivateKey) {
+    if (rawPrivateKey.startsWith('"') && rawPrivateKey.endsWith('"')) {
+        rawPrivateKey = rawPrivateKey.slice(1, -1);
+    }
+}
+const privateKey = rawPrivateKey?.replace(/\\n/g, '\n');
 
 const auth = new google.auth.GoogleAuth({
     credentials: {
