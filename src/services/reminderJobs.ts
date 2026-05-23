@@ -113,8 +113,8 @@ export async function registerScheduleJobs(params: {
     const deadline = parseJstDate(params.deadlineDate);
     const nowJstStr = toJstIsoString(getJstNow());
 
-    // 1. 前日リマインド (締切前日 18:00 JST)
-    const runAtBefore = getJstTimeForDate(new Date(deadline.getTime() - 24 * 60 * 60 * 1000), 18, 0);
+    // 1. 前日リマインド (締切前日 10:00 JST)
+    const runAtBefore = getJstTimeForDate(new Date(deadline.getTime() - 24 * 60 * 60 * 1000), 10, 0);
     // 2. 当日リマインド (締切当日 18:00 JST)
     const runAtDeadline = getJstTimeForDate(deadline, 18, 0);
     // 3. 翌日集計 (締切翌日 10:00 JST)
@@ -151,7 +151,7 @@ export async function registerScheduleJobs(params: {
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID!,
             range: `${SHEET_NAME}!A:O`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'RAW',
             requestBody: {
                 values: rows
             }
@@ -255,7 +255,7 @@ export async function updateJob(
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${SHEET_NAME}!A${rowNumber}:O${rowNumber}`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'RAW',
             requestBody: {
                 values: [row]
             }
@@ -299,7 +299,7 @@ export async function cancelPendingJobsByUrl(sheetUrl: string): Promise<number> 
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: SPREADSHEET_ID!,
                     range: `${SHEET_NAME}!A${rowNumber}:O${rowNumber}`,
-                    valueInputOption: 'USER_ENTERED',
+                    valueInputOption: 'RAW',
                     requestBody: {
                         values: [row]
                     }
