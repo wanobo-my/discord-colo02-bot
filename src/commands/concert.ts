@@ -273,7 +273,7 @@ export async function handleUserSelect(interaction: UserSelectMenuInteraction) {
 
     // A. 新規作成時のメンバー選択
     if (customId === 'concert_select_members') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferUpdate();
 
         const session = createSessions.get(interaction.user.id);
         if (!session) {
@@ -330,7 +330,7 @@ export async function handleButton(interaction: ButtonInteraction) {
 
     // A. 新規作成時の写真ポリシー選択
     if (customId.startsWith('concert_btn_photo_')) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferUpdate();
 
         const session = createSessions.get(interaction.user.id);
         if (!session) {
@@ -744,7 +744,10 @@ export async function postActivityForm(thread: ThreadChannel): Promise<void> {
     const defaultUrl = 'https://docs.google.com/forms/d/e/1FAIpQLSdKkOzdnoQi8c8-nta7cvP0XiEEYzx-sRJd7cewetZKNJdgKA/viewform?usp=publish-editor';
     const formUrl = process.env.ACTIVITY_FORM_URL || defaultUrl;
     
-    const formMessage = `**🌷活動記録フォームのお願い**\n今日もおつかれさまでした！\n↓今後の活動報告や記録整理のための記録はこちらから\n${formUrl}`;
+    const formMessage = `**🌷活動記録フォームのお願い**
+今日もおつかれさまでした！
+↓今後の活動報告や記録整理のためにフォーム入力お願いします！
+${formUrl}`;
     
     await thread.send(formMessage);
     console.log(`✅ [Phase 3] スレッド ID: ${thread.id} に活動記録フォームを自動投稿しました。`);

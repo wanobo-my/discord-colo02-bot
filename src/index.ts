@@ -406,43 +406,7 @@ client.on(Events.MessageCreate, async message => {
 });
 
 // =====================================================
-// 🏷️ (5) 手動でのフォーラムスレッドタグ更新の同期
-// =====================================================
-client.on(Events.ThreadUpdate, async (oldThread, newThread) => {
-    const forumChannelId = process.env.CONCERT_FORUM_CHANNEL_ID;
-    if (!forumChannelId || newThread.parentId !== forumChannelId) return;
-
-    const doneTagId = process.env.CONCERT_TAG_DONE_ID;
-    if (!doneTagId) return;
-
-    // タグが「終了」に変更されたかを検知
-    const wasDone = oldThread.appliedTags.includes(doneTagId);
-    const isDone = newThread.appliedTags.includes(doneTagId);
-
-    if (!wasDone && isDone) {
-        console.log(`ℹ️ [threadUpdate] スレッド ID: ${newThread.id} のタグが手動で「終了」に更新されました。`);
-
-        // スプレッドシートから対象のレコードを検索
-        const allConcerts = await getAllConcertThreads();
-        const concert = allConcerts.find(c => c.threadId === newThread.id);
-        
-        // すでに done になっている二重送信を防ぐ
-        if (concert && concert.status === 'planned' && concert.rowNumber) {
-            try {
-                // スプレッドシートのステータスを更新
-                await updateConcertThread(concert.rowNumber, { status: 'done' });
-                
-                // 活動報告フォームを自動投稿
-                await concertCommand.postActivityForm(newThread as ThreadChannel);
-            } catch (error: any) {
-                console.error(`❌ [threadUpdate] 手動終了同期エラー:`, error.message);
-            }
-        }
-    }
-});
-
-// =====================================================
-// ⏰ (6) 当日コンサートの自動終了・フォーム投稿 (毎日 17:00)
+// ⏰ (5) 当日コンサートの自動終了・フォーム投稿 (毎日 17:00)
 // =====================================================
 cron.schedule("0 17 * * *", async () => {
     console.log("⏰ [cron] 当日コンサートの自動終了処理を開始します...");
