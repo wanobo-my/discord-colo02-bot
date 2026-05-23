@@ -277,13 +277,21 @@ async function processReminderJobs() {
                             .setFooter({ text: `未回答: ${result.names.length}名` })
                             .setTimestamp();
                         
-                        await channel.send({ content: mentionString, embeds: [embed] });
+                        await channel.send({ 
+                            content: mentionString, 
+                            embeds: [embed],
+                            allowedMentions: { parse: ['users'] }
+                        });
                     }
                 } 
                 else if (job.jobType === 'schedule_finish') {
                     // 自動集計
                     const embed = await generateTallyEmbed(gasUrl, job.sheetUrl);
-                    await channel.send({ embeds: [embed] });
+                    await channel.send({ 
+                        content: '<@&1374042129201893396> 日程調整の集計結果です！', 
+                        embeds: [embed],
+                        allowedMentions: { parse: ['roles'] }
+                    });
                 }
                 else {
                     throw new Error(`未知のジョブタイプです: ${job.jobType}`);

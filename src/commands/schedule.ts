@@ -128,7 +128,8 @@ export async function execute(interaction: CommandInteraction) {
                     .setTimestamp();
                 await interaction.editReply({ 
                     content: '<@&1374042129201893396> 新しい日程調整シートが作成されました。回答をお願いします！', 
-                    embeds: [embed] 
+                    embeds: [embed],
+                    allowedMentions: { parse: ['roles'] }
                 });
             } else {
                 throw new Error(result.message);
@@ -186,7 +187,8 @@ export async function execute(interaction: CommandInteraction) {
             const embed = await generateTallyEmbed(gasUrl, sheetUrl);
             await interaction.editReply({ 
                 content: '<@&1374042129201893396> 日程調整の集計結果です！', 
-                embeds: [embed] 
+                embeds: [embed],
+                allowedMentions: { parse: ['roles'] }
             });
         } catch (error: any) {
             console.error(error);
