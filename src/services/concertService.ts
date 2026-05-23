@@ -127,7 +127,7 @@ export async function saveConcertThread(params: Omit<ConcertThread, 'concertId' 
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID!,
             range: `${SHEET_NAME}!A:P`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'RAW',
             requestBody: {
                 values: [row]
             }
@@ -236,7 +236,7 @@ export async function updateConcertThread(
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${SHEET_NAME}!A${rowNumber}:P${rowNumber}`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'RAW',
             requestBody: {
                 values: [paddedRow]
             }

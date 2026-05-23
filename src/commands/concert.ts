@@ -373,24 +373,24 @@ export async function handleButton(interaction: ButtonInteraction) {
 
     // B. 新規作成の確定 (投稿する)
     else if (customId === 'concert_post_confirm') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferUpdate();
 
         const session = createSessions.get(interaction.user.id);
         if (!session) {
-            await interaction.editReply('❌ エラー: セッションが見つかりません。');
+            await interaction.editReply({ content: '❌ エラー: セッションが見つかりません。', embeds: [], components: [] });
             return;
         }
 
         const forumChannelId = process.env.CONCERT_FORUM_CHANNEL_ID;
         if (!forumChannelId) {
-            await interaction.editReply('❌ エラー: 環境変数 `CONCERT_FORUM_CHANNEL_ID` が設定されていません。');
+            await interaction.editReply({ content: '❌ エラー: 環境変数 `CONCERT_FORUM_CHANNEL_ID` が設定されていません。', embeds: [], components: [] });
             return;
         }
 
         try {
             const forum = await interaction.client.channels.fetch(forumChannelId) as ForumChannel;
             if (!forum || !(forum instanceof ForumChannel)) {
-                await interaction.editReply('❌ エラー: 指定されたチャンネルはフォーラムチャンネルではありません。');
+                await interaction.editReply({ content: '❌ エラー: 指定されたチャンネルはフォーラムチャンネルではありません。', embeds: [], components: [] });
                 return;
             }
 
@@ -437,10 +437,11 @@ export async function handleButton(interaction: ButtonInteraction) {
             // セッションクリア
             createSessions.delete(interaction.user.id);
 
-            await interaction.editReply(`🎉 コンサートのフォーラム投稿を作成しました！スレッド: <#${thread.id}>`);
+            // コマンド使用者に見える元のプレビューメッセージを削除して画面をクリーンにする
+            await interaction.deleteReply();
         } catch (error: any) {
             console.error('Post error:', error);
-            await interaction.editReply(`❌ 投稿失敗: ${error.message}`);
+            await interaction.editReply({ content: `❌ 投稿失敗: ${error.message}`, embeds: [], components: [] });
         }
     }
 
