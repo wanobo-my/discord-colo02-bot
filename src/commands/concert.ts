@@ -15,7 +15,8 @@ import {
     UserSelectMenuInteraction,
     ButtonInteraction,
     ForumChannel,
-    ThreadChannel
+    ThreadChannel,
+    Client
 } from 'discord.js';
 import dotenv from 'dotenv';
 import { saveConcertThread, getConcertThreadByThreadId, updateConcertThread } from '../services/concertService.js';
@@ -648,8 +649,11 @@ export async function handleButton(interaction: ButtonInteraction) {
 
                 // Phase 3: 活動後フォーム自動投稿
                 await postActivityForm(thread);
+
+                // 写真アルバムスレッド作成
+                await createPhotoAlbumThread(interaction.client, concert);
             }
-            await interaction.editReply('✅ ステータスを「終了」にし、タグを更新しました。活動後フォームも自動投稿しました。');
+            await interaction.editReply('✅ ステータスを「終了」にし、タグを更新しました。活動後フォームも自動投稿し、#写真アルバム にスレッドを作成しました。');
         } catch (error: any) {
             console.error('Status update error:', error);
             await interaction.editReply(`⚠️ スプレッドシートは「終了」にしましたが、Discordの更新に失敗しました: ${error.message}`);
@@ -751,4 +755,44 @@ ${formUrl}`;
     
     await thread.send(formMessage);
     console.log(`✅ [Phase 3] スレッド ID: ${thread.id} に活動記録フォームを自動投稿しました。`);
+}
+
+/**
+ * #写真アルバム チャンネルに、該当コンサートの写真投稿用スレッドを作成し、
+ * 参加メンバーをメンションします。
+ */
+export async function createPhotoAlbumThread(
+    client: Client,
+    concert: { title: string; participantIds?: string }
+): Promise<void> {
+    const albumChannelId = '1358112786521129290';
+    try {
+        const channel = await client.channels.fetch(albumChannelId);
+        if (!channel || !(channel.isTextBased() && 'threads' in channel)) {
+            console.error(`⚠️ #写真アルバム チャンネル (${albumChannelId}) が見つからないか、スレッドを作成できるチャンネルではありません。`);
+            return;
+        }
+
+        // スレッドの作成
+        const thread = await (channel as any).threads.create({
+            name: concert.title,
+            autoArchiveDuration: 1440, // 24時間
+            reason: `コンサート ${concert.title} の写真アルバムスレッド`
+        });
+
+        // 参加メンバーのメンション文字列を作成
+        const participantIds = concert.participantIds ? concert.participantIds.split(',') : [];
+        if (participantIds.length > 0) {
+            const mentionString = participantIds.map(id => `<@${id.trim()}>`).join(' ');
+            // 作成したスレッドにメンションメッセージを送信
+            await thread.send({
+                content: mentionString,
+                allowedMentions: { parse: ['users'] }
+            });
+        }
+        console.log(`✅ #写真アルバム チャンネルにスレッド「${concert.title}」を作成し、メンバーをメンションしました。`);
+
+    } catch (error: any) {
+        console.error('❌ #写真アルバム スレッド作成エラー:', error.message);
+    }
 }

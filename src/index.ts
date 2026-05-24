@@ -471,6 +471,9 @@ async function autoCloseConcertsForToday() {
                 
                 // 活動報告フォームを自動投稿
                 await concertCommand.postActivityForm(thread);
+
+                // 写真アルバムスレッド作成
+                await concertCommand.createPhotoAlbumThread(client, concert);
             }
             console.log(`✅ [cron] コンサート「${concert.title}」を自動終了しました。`);
         } catch (error: any) {
