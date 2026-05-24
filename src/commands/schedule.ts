@@ -256,7 +256,7 @@ export async function generateTallyEmbed(gasUrl: string, sheetUrl: string): Prom
         .setColor(Colors.Blue)
         .setTimestamp();
 
-    let resultText = "みんな回答ありがとうございました！\n\n「◯」と「△」の回答状況一覧です。\n※敬称略\n----------------\n";
+    let resultText = "みんな回答ありがとうございました！\n\n----------------\n";
 
     tallyData.forEach(item => {
         if (item.o.length === 0 && item.tri.length === 0) return;

@@ -786,7 +786,7 @@ export async function createPhotoAlbumThread(
             const mentionString = participantIds.map(id => `<@${id.trim()}>`).join(' ');
             // 作成したスレッドにメンションメッセージを送信
             await thread.send({
-                content: mentionString,
+                content: `${mentionString} コンサートの写真こちらにお願いします！`,
                 allowedMentions: { parse: ['users'] }
             });
         }
