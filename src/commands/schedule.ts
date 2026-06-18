@@ -250,7 +250,7 @@ export async function generateTallyEmbed(gasUrl: string, sheetUrl: string): Prom
 
     if (!result.success) throw new Error(result.message);
 
-    const tallyData: { date: string, o: string[], tri: string[] }[] = result.data;
+    const tallyData: { date: string, o: string[], tri: string[], x?: string[] }[] = result.data;
 
     const embed = new EmbedBuilder()
         .setTitle('📊 日程集計結果')
@@ -264,11 +264,15 @@ export async function generateTallyEmbed(gasUrl: string, sheetUrl: string): Prom
 
         const o_names = item.o.length > 0 ? item.o.join(', ') : 'なし';
         const tri_names = item.tri.length > 0 ? item.tri.join(', ') : 'なし';
+        const x_names = (item.x && item.x.length > 0) ? item.x.join(', ') : 'なし';
 
         resultText += `**${item.date}**\n`;
         resultText += `⭕️ **${item.o.length}人**: ${o_names}\n`;
         if (item.tri.length > 0) {
             resultText += `🤔 **${item.tri.length}人**: ${tri_names}\n`;
+        }
+        if (item.x && item.x.length > 0) {
+            resultText += `🙅‍♀️ **${item.x.length}人**: ${x_names}\n`;
         }
         resultText += `----------------\n`;
     });

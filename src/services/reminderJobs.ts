@@ -117,8 +117,8 @@ export async function registerScheduleJobs(params: {
     const runAtBefore = getJstTimeForDate(new Date(deadline.getTime() - 24 * 60 * 60 * 1000), 10, 0);
     // 2. 当日リマインド (締切当日 18:00 JST)
     const runAtDeadline = getJstTimeForDate(deadline, 18, 0);
-    // 3. 翌日集計 (締切翌日 10:00 JST)
-    const runAtFinish = getJstTimeForDate(new Date(deadline.getTime() + 24 * 60 * 60 * 1000), 10, 0);
+    // 3. 翌日集計 (締切翌日 00:00 JST)
+    const runAtFinish = getJstTimeForDate(new Date(deadline.getTime() + 24 * 60 * 60 * 1000), 0, 0);
 
     const jobs = [
         { type: 'schedule_remind_before', runAt: runAtBefore },

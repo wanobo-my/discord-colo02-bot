@@ -414,9 +414,9 @@ client.on(Events.MessageCreate, async message => {
 });
 
 // =====================================================
-// ⏰ (5) 当日コンサートの自動終了・フォーム投稿 (毎日 17:00)
+// ⏰ (5) 当日コンサートの自動終了・フォーム投稿 (毎日 16:00)
 // =====================================================
-cron.schedule("0 17 * * *", async () => {
+cron.schedule("0 16 * * *", async () => {
     console.log("⏰ [cron] 当日コンサートの自動終了処理を開始します...");
     try {
         await autoCloseConcertsForToday();
