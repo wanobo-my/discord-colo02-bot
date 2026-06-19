@@ -272,7 +272,7 @@ export async function generateTallyEmbed(gasUrl: string, sheetUrl: string): Prom
             resultText += `🤔 **${item.tri.length}人**: ${tri_names}\n`;
         }
         if (item.x && item.x.length > 0) {
-            resultText += `🙅‍♀️ **${item.x.length}人**: ${x_names}\n`;
+            resultText += `🙏 **${item.x.length}人**: ${x_names}\n`;
         }
         resultText += `----------------\n`;
     });
