@@ -751,7 +751,8 @@ export async function postActivityForm(thread: ThreadChannel): Promise<void> {
     const formMessage = `**🌷活動記録フォームのお願い**
 今日もおつかれさまでした！
 ↓今後の活動報告や記録整理のためにフォーム入力お願いします！
-${formUrl}`;
+${formUrl}
+-# Discord内のブラウザだとファイルのアップロードができないことがあるみたいなので、携帯の標準ブラウザ（Safari, Chromeなど）での入力がおすすめです！`;
     
     await thread.send(formMessage);
     console.log(`✅ [Phase 3] スレッド ID: ${thread.id} に活動記録フォームを自動投稿しました。`);
