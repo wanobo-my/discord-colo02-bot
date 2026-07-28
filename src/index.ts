@@ -11,11 +11,40 @@ import { getExecutableJobs, updateJob } from './services/reminderJobs.js';
 import { getAllConcertThreads, updateConcertThread } from './services/concertService.js';
 import { checkIncompleteUsers, generateTallyEmbed, USER_MAP } from './commands/schedule.js';
 import { toJstIsoString, getJstNow } from './utils/date.js';
+import { handleSetlistMessage, getSetlistMode } from './services/setlistCollector.js';
 
 dotenv.config();
 
 // ポート設定
 const PORT = parseInt(process.env.PORT || '8000');
+
+// =====================================================
+// 🧪 ローカル検証モード
+// =====================================================
+// LOCAL_DEV=true のとき、定期実行 (cron) とメンションへのリアクションを無効化する。
+// Koyeb の本番 bot を止めずにローカルで起動すると同じ bot が二重に動き、
+// リアクションが 2 回付いたり定期処理が 2 回実行されたりするため、その防止用。
+// 環境変数を設定しなければ従来どおり動作する (本番への影響なし)。
+const LOCAL_DEV = process.env.LOCAL_DEV === 'true';
+
+if (LOCAL_DEV) {
+    console.log('🧪 LOCAL_DEV=true: cron とメンション反応を無効化して起動します。');
+}
+
+/**
+ * cron ジョブを登録します。LOCAL_DEV のときは登録をスキップします。
+ */
+function scheduleJob(
+    expression: string,
+    handler: () => void | Promise<void>,
+    options?: { timezone?: string }
+): void {
+    if (LOCAL_DEV) {
+        console.log(`🧪 [LOCAL_DEV] cron をスキップ: ${expression}`);
+        return;
+    }
+    (cron.schedule as any)(expression, handler, options);
+}
 
 // =====================================================
 // 🌍 1. Hono Webサーバー設定 (ご提示のコードを統合)
@@ -48,7 +77,7 @@ const HEALTH_CHECK_URL = process.env.HEALTH_CHECK_URL || `http://localhost:${POR
 console.log(`🕐 ヘルスチェックの定期実行を開始しました (10分間隔) - Target: ${HEALTH_CHECK_URL}`);
 
 // 10分ごとにヘルスチェックを実行
-cron.schedule("*/10 * * * *", async () => {
+scheduleJob("*/10 * * * *", async () => {
   try {
     const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
     console.log(`🔍 [${now}] ヘルスチェック実行中... (${HEALTH_CHECK_URL})`);
@@ -68,7 +97,7 @@ cron.schedule("*/10 * * * *", async () => {
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
 // Cron式: 0 9 1 * * = 毎月1日の 9:00
-cron.schedule("0 9 1 * *", async () => {
+scheduleJob("0 9 1 * *", async () => {
     console.log("📅 月初の予定通知を実行します...");
 
     const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
@@ -171,7 +200,7 @@ cron.schedule("0 9 1 * *", async () => {
 // =====================================================
 // (3) 🤖 月末のスプレッドシート更新リマインダー (毎月28日 AM9:00)
 // =====================================================
-cron.schedule("00 20 28 * *", async () => {
+scheduleJob("00 20 28 * *", async () => {
     console.log("📅 月末のリマインダーを実行します...");
 
     // ご指定いただいたチャンネルID
@@ -202,7 +231,7 @@ TimeTreeの予定をスプレッドシートに転記シマショウ⚡️
 // =====================================================
 // ⏰ (4) 自動ジョブの定期巡回 (1時間ごと)
 // =====================================================
-cron.schedule("0 * * * *", async () => {
+scheduleJob("0 * * * *", async () => {
     console.log("⏰ [cron] 自動ジョブの巡回を開始します...");
     await processReminderJobs();
 }, {
@@ -336,6 +365,7 @@ const client = new Client({
 
 client.once('ready', () => {
     console.log(`🚀 準備完了！ ${client.user?.tag} が起動しました`);
+    console.log(`📋 曲目リストの回収モード: ${getSetlistMode()}  (off / dryrun / on)`);
 });
 
 client.on('interactionCreate', async (interaction: Interaction) => {
@@ -391,9 +421,22 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         return;
     }
 });
+// =====================================================
+// 📋 曲目リストの自動回収
+// =====================================================
+// 独立したリスナーとして登録する (既存のメンション反応に影響を与えないため)。
+// SETLIST_MODE が off (既定) のときは即座に return するので、
+// 環境変数を設定しなければ従来どおりの挙動になる。
+client.on(Events.MessageCreate, async message => {
+    await handleSetlistMessage(message);
+});
+
 client.on(Events.MessageCreate, async message => {
     // Bot自身の発言や、Botによる発言は無視
     if (message.author.bot) return;
+
+    // ローカル検証時は、本番botと二重にリアクションが付くのを防ぐためスキップする
+    if (LOCAL_DEV) return;
 
     // Botがメンションに含まれているかチェック
     if (message.mentions.users.has(client.user!.id)) {
@@ -416,7 +459,7 @@ client.on(Events.MessageCreate, async message => {
 // =====================================================
 // ⏰ (5) 当日コンサートの自動終了・フォーム投稿 (毎日 16:00)
 // =====================================================
-cron.schedule("0 16 * * *", async () => {
+scheduleJob("0 16 * * *", async () => {
     console.log("⏰ [cron] 当日コンサートの自動終了処理を開始します...");
     try {
         await autoCloseConcertsForToday();

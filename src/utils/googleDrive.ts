@@ -26,7 +26,7 @@ const FOLDER_MIME = 'application/vnd.google-apps.folder';
 // SETLIST_ROOT_FOLDER_ID の直下に作られる、曲目リスト用フォルダの名前。
 // ⚠️ Drive 側でこのフォルダをリネームした場合は、ここも必ず合わせること。
 //    一致しないと bot は「無い」と判断して同名フォルダを新規作成してしまう。
-const SETLIST_FOLDER_NAME = '#記録_曲目リスト';
+export const SETLIST_FOLDER_NAME = '#記録_曲目リスト';
 
 let cachedDrive: drive_v3.Drive | null = null;
 
