@@ -11,11 +11,42 @@ import { getExecutableJobs, updateJob } from './services/reminderJobs.js';
 import { getAllConcertThreads, updateConcertThread } from './services/concertService.js';
 import { checkIncompleteUsers, generateTallyEmbed, USER_MAP } from './commands/schedule.js';
 import { toJstIsoString, getJstNow } from './utils/date.js';
+import { handleSetlistMessage, getSetlistMode } from './services/setlistCollector.js';
 
 dotenv.config();
 
 // ポート設定
 const PORT = parseInt(process.env.PORT || '8000');
+
+// =====================================================
+// 🧪 ローカル検証モード
+// =====================================================
+// LOCAL_DEV=true のとき、cron・メンション反応・インタラクション処理を無効化する。
+// Koyeb の本番 bot を止めずにローカルで起動すると同じ bot が二重に動き、
+// リアクションが 2 回付く、定期処理が 2 回走る、スラッシュコマンドの応答が競合して
+// 「Interaction has already been acknowledged」で落ちる、といった問題が起きるため。
+// 環境変数を設定しなければ従来どおり動作する (本番への影響なし)。
+const LOCAL_DEV = process.env.LOCAL_DEV === 'true';
+
+if (LOCAL_DEV) {
+    console.log('🧪 LOCAL_DEV=true: cron / メンション反応 / インタラクション処理を無効化して起動します。');
+    console.log('   → ローカル起動中はスラッシュコマンドを使えません (本番botが処理します)。');
+}
+
+/**
+ * cron ジョブを登録します。LOCAL_DEV のときは登録をスキップします。
+ */
+function scheduleJob(
+    expression: string,
+    handler: () => void | Promise<void>,
+    options?: { timezone?: string }
+): void {
+    if (LOCAL_DEV) {
+        console.log(`🧪 [LOCAL_DEV] cron をスキップ: ${expression}`);
+        return;
+    }
+    (cron.schedule as any)(expression, handler, options);
+}
 
 // =====================================================
 // 🌍 1. Hono Webサーバー設定 (ご提示のコードを統合)
@@ -48,7 +79,7 @@ const HEALTH_CHECK_URL = process.env.HEALTH_CHECK_URL || `http://localhost:${POR
 console.log(`🕐 ヘルスチェックの定期実行を開始しました (10分間隔) - Target: ${HEALTH_CHECK_URL}`);
 
 // 10分ごとにヘルスチェックを実行
-cron.schedule("*/10 * * * *", async () => {
+scheduleJob("*/10 * * * *", async () => {
   try {
     const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
     console.log(`🔍 [${now}] ヘルスチェック実行中... (${HEALTH_CHECK_URL})`);
@@ -68,7 +99,7 @@ cron.schedule("*/10 * * * *", async () => {
 
 // (2) ✨ 月初のコンサート予定通知 (毎月1日 AM9:00)
 // Cron式: 0 9 1 * * = 毎月1日の 9:00
-cron.schedule("0 9 1 * *", async () => {
+scheduleJob("0 9 1 * *", async () => {
     console.log("📅 月初の予定通知を実行します...");
 
     const NOTIFY_CHANNEL_ID = process.env.NOTIFY_CHANNEL_ID;
@@ -171,7 +202,7 @@ cron.schedule("0 9 1 * *", async () => {
 // =====================================================
 // (3) 🤖 月末のスプレッドシート更新リマインダー (毎月28日 AM9:00)
 // =====================================================
-cron.schedule("00 20 28 * *", async () => {
+scheduleJob("00 20 28 * *", async () => {
     console.log("📅 月末のリマインダーを実行します...");
 
     // ご指定いただいたチャンネルID
@@ -202,7 +233,7 @@ TimeTreeの予定をスプレッドシートに転記シマショウ⚡️
 // =====================================================
 // ⏰ (4) 自動ジョブの定期巡回 (1時間ごと)
 // =====================================================
-cron.schedule("0 * * * *", async () => {
+scheduleJob("0 * * * *", async () => {
     console.log("⏰ [cron] 自動ジョブの巡回を開始します...");
     await processReminderJobs();
 }, {
@@ -336,17 +367,71 @@ const client = new Client({
 
 client.once('ready', () => {
     console.log(`🚀 準備完了！ ${client.user?.tag} が起動しました`);
+    console.log(`📋 曲目リストの回収モード: ${getSetlistMode()}  (off / dryrun / on)`);
 });
 
-client.on('interactionCreate', async (interaction: Interaction) => {
-    // 1. スラッシュコマンドの処理
-    if (interaction.isCommand()) {
-        const { commandName } = interaction;
+// =====================================================
+// 🛡️ プロセス停止を防ぐための最終防衛線
+// =====================================================
+// EventEmitter は 'error' にリスナーが無いと例外を投げてプロセスを止める。
+// discord.js の Client も EventEmitter なので、必ずリスナーを付けておく。
+client.on('error', (error) => {
+    console.error('❌ Discord クライアントのエラー:', error);
+});
 
-        try {
+client.on('shardError', (error) => {
+    console.error('❌ Gateway 接続のエラー:', error);
+});
+
+// どこでも捕捉されなかった Promise の拒否。
+// 記録は必ず残したうえで、bot は動かし続ける (常駐前提のため停止させない)。
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ 未処理の Promise 拒否:', reason);
+});
+
+/**
+ * インタラクション処理のエラーを、利用者への通知とログの両方に残します。
+ *
+ * ⚠️ 通知そのものが失敗しうる点が重要です (既に応答済み / 期限切れ / 二重起動など)。
+ *    その失敗を捕捉しないと未処理の Promise 拒否となり、Client の 'error' イベント経由で
+ *    bot のプロセスが停止します。実際に二重起動時の検証で停止を確認しました。
+ */
+async function notifyInteractionError(interaction: Interaction, error: unknown): Promise<void> {
+    // エラーは必ず記録する (握り潰さない)
+    console.error('❌ インタラクション処理でエラーが発生しました:', error);
+
+    if (!interaction.isRepliable()) return;
+
+    try {
+        const content = 'コマンド実行中にエラーが発生しました。';
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content, ephemeral: true });
+        } else {
+            await interaction.reply({ content, ephemeral: true });
+        }
+    } catch (notifyError) {
+        // 通知にも失敗した場合はログだけ残し、bot は動かし続ける
+        console.error('❌ エラー通知の送信にも失敗しました:', notifyError);
+    }
+}
+
+client.on('interactionCreate', async (interaction: Interaction) => {
+    // ローカル検証時は本番botに処理を任せる。
+    // 同じbotが二重に起動していると、先に応答した側が勝ち、もう一方は
+    // 「Interaction has already been acknowledged」で失敗するため。
+    if (LOCAL_DEV) return;
+
+    // モーダル・セレクト・ボタンの処理も含めて全体を捕捉する。
+    // 以前はスラッシュコマンドにしか try/catch が無く、他の経路で例外が出ると
+    // 未処理の Promise 拒否となり bot が停止していた。
+    try {
+        // 1. スラッシュコマンドの処理
+        if (interaction.isCommand()) {
+            const { commandName } = interaction;
+
             if (commandName === 'schedule') {
                 await scheduleCommand.execute(interaction);
-            } 
+            }
             else if (commandName === 'hello') {
                 await helloCommand.execute(interaction);
             }
@@ -356,44 +441,52 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             else if (commandName === 'concert') {
                 await concertCommand.execute(interaction);
             }
-        } catch (error) {
-            console.error(error);
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
-            } else {
-                await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+            return;
+        }
+
+        // 2. モーダル送信の処理
+        if (interaction.isModalSubmit()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleModalSubmit(interaction);
             }
+            return;
         }
-        return;
-    }
 
-    // 2. モーダル送信の処理
-    if (interaction.isModalSubmit()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleModalSubmit(interaction);
+        // 3. ユーザー選択メニューの処理
+        if (interaction.isUserSelectMenu()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleUserSelect(interaction);
+            }
+            return;
         }
-        return;
-    }
 
-    // 3. ユーザー選択メニューの処理
-    if (interaction.isUserSelectMenu()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleUserSelect(interaction);
+        // 4. ボタンクリックの処理
+        if (interaction.isButton()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleButton(interaction);
+            }
+            return;
         }
-        return;
-    }
-
-    // 4. ボタンクリックの処理
-    if (interaction.isButton()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleButton(interaction);
-        }
-        return;
+    } catch (error) {
+        await notifyInteractionError(interaction, error);
     }
 });
+// =====================================================
+// 📋 曲目リストの自動回収
+// =====================================================
+// 独立したリスナーとして登録する (既存のメンション反応に影響を与えないため)。
+// SETLIST_MODE が off (既定) のときは即座に return するので、
+// 環境変数を設定しなければ従来どおりの挙動になる。
+client.on(Events.MessageCreate, async message => {
+    await handleSetlistMessage(message);
+});
+
 client.on(Events.MessageCreate, async message => {
     // Bot自身の発言や、Botによる発言は無視
     if (message.author.bot) return;
+
+    // ローカル検証時は、本番botと二重にリアクションが付くのを防ぐためスキップする
+    if (LOCAL_DEV) return;
 
     // Botがメンションに含まれているかチェック
     if (message.mentions.users.has(client.user!.id)) {
@@ -416,7 +509,7 @@ client.on(Events.MessageCreate, async message => {
 // =====================================================
 // ⏰ (5) 当日コンサートの自動終了・フォーム投稿 (毎日 16:00)
 // =====================================================
-cron.schedule("0 16 * * *", async () => {
+scheduleJob("0 16 * * *", async () => {
     console.log("⏰ [cron] 当日コンサートの自動終了処理を開始します...");
     try {
         await autoCloseConcertsForToday();
