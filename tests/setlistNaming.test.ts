@@ -86,7 +86,7 @@ describe('getYear / buildBaseName', () => {
     test('ファイル名の土台を組み立てる (日付はハイフン形式)', () => {
         assert.equal(
             buildBaseName('2026.07.28', '八事福祉会（八事苑デイサービスセンター）'),
-            '2026-0728_八事福祉会（八事苑デイサービスセンター）'
+            '2026-07-28_八事福祉会（八事苑デイサービスセンター）'
         );
     });
 
@@ -95,9 +95,9 @@ describe('getYear / buildBaseName', () => {
         assert.equal(base.includes('.'), false);
     });
 
-    test('日付をファイル名用に整形する', () => {
-        assert.equal(formatDateForFileName('2026.07.28'), '2026-0728');
-        assert.equal(formatDateForFileName('2026.12.01'), '2026-1201');
+    test('日付をISO 8601形式に整形する', () => {
+        assert.equal(formatDateForFileName('2026.07.28'), '2026-07-28');
+        assert.equal(formatDateForFileName('2026.12.01'), '2026-12-01');
     });
 
     test('名前順に並べると日付順になる', () => {

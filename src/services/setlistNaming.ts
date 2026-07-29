@@ -71,23 +71,22 @@ export function getYear(date: string): string {
 }
 
 /**
- * ファイル名用に日付を整形します。「2026.07.28」→「2026-0728」
+ * ファイル名用に日付を整形します。「2026.07.28」→「2026-07-28」(ISO 8601)
  *
- * ⚠️ ファイル名にピリオドが入らないようにするための整形です。
- *    拡張子以外にピリオドがあると、「最初のピリオドまでを名前とみなす」
- *    ような素朴な処理でファイル名が壊れることがあるためです。
- *    (フォルダ名やスレッド名、シートの表記は従来どおりピリオド区切りのままです)
+ * 2つの理由でハイフン区切りにしています。
+ *   1. ファイル名に拡張子以外のピリオドがあると、「最初のピリオドまでを名前と
+ *      みなす」ような素朴な処理でファイル名が壊れることがある
+ *   2. ISO 8601 形式なら、表計算ソフトや OS のソートが日付として自動認識できる
+ *
+ * (フォルダ名やスレッド名、シートの表記は従来どおりピリオド区切りのままです)
  */
 export function formatDateForFileName(date: string): string {
-    const parts = date.split('.');
-    if (parts.length !== 3) return date.replace(/\./g, '-');
-    const [year, month, day] = parts;
-    return `${year}-${month}${day}`;
+    return date.replace(/\./g, '-');
 }
 
 /**
  * 連番を除いたファイル名の土台を作ります。
- * 例: 2026-0728_八事福祉会（八事苑デイサービスセンター）
+ * 例: 2026-07-28_八事福祉会（八事苑デイサービスセンター）
  */
 export function buildBaseName(date: string, facilityFull: string): string {
     return `${formatDateForFileName(date)}_${facilityFull.trim()}`;
