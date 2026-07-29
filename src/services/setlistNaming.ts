@@ -105,22 +105,35 @@ export interface ParsedSetlistFileName {
 // 施設名にアンダースコアが含まれてもよいよう、末尾の「_連番.拡張子」を優先して切り出す。
 const SETLIST_FILE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})_(.+)_(\d+)\.[^.]+$/;
 
+// 2026-06-15_リレ石川橋.jpeg
+// 手作業で整理されたファイルには連番が無いことがあるため、これも受け付ける。
+const SETLIST_FILE_PATTERN_WITHOUT_INDEX = /^(\d{4})-(\d{2})-(\d{2})_(.+)\.[^.]+$/;
+
 /**
  * 保存済みファイルの名前から、実施日・施設名・連番を取り出します。
  * 曲目リストの命名規則に合致しない場合は null を返します (_未分類 のファイルなど)。
+ *
+ * 連番は省略可能です。bot が保存するファイルには必ず付きますが、
+ * 人が手で整理したファイルには無いことがあるため、その場合は連番 0 として扱います。
  */
 export function parseSetlistFileName(fileName: string): ParsedSetlistFileName | null {
-    const matched = fileName.match(SETLIST_FILE_PATTERN);
-    if (!matched) return null;
+    const withIndex = fileName.match(SETLIST_FILE_PATTERN);
+    if (withIndex) {
+        const date = buildDate(withIndex[1], withIndex[2], withIndex[3]);
+        if (date) {
+            return { date, facilityFull: withIndex[4], index: Number(withIndex[5]) };
+        }
+    }
 
-    const date = buildDate(matched[1], matched[2], matched[3]);
-    if (!date) return null;
+    const withoutIndex = fileName.match(SETLIST_FILE_PATTERN_WITHOUT_INDEX);
+    if (withoutIndex) {
+        const date = buildDate(withoutIndex[1], withoutIndex[2], withoutIndex[3]);
+        if (date) {
+            return { date, facilityFull: withoutIndex[4], index: 0 };
+        }
+    }
 
-    return {
-        date,
-        facilityFull: matched[4],
-        index: Number(matched[5]),
-    };
+    return null;
 }
 
 /**
