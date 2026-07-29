@@ -17,25 +17,22 @@ import {
     getYear,
     isSetlistAnchorContent,
     normalizeDate,
+    formatDateForFileName,
     parseThreadName,
-    splitFacility,
 } from '../src/services/setlistNaming.js';
 
 describe('parseThreadName', () => {
-    test('実際のスレッド名を法人名と施設名に分解できる', () => {
+    test('アンダーバー以降をまるごと施設名として扱う', () => {
         const result = parseThreadName('2026.07.28_八事福祉会（八事苑デイサービスセンター）');
         assert.deepEqual(result, {
             date: '2026.07.28',
             facilityFull: '八事福祉会（八事苑デイサービスセンター）',
-            corporation: '八事福祉会',
-            facility: '八事苑デイサービスセンター',
         });
     });
 
-    test('括弧がない施設名は法人名だけになる', () => {
+    test('括弧がない施設名もそのまま扱う', () => {
         const result = parseThreadName('2026.05.16_ボンセジュール植田');
-        assert.equal(result?.corporation, 'ボンセジュール植田');
-        assert.equal(result?.facility, null);
+        assert.equal(result?.facilityFull, 'ボンセジュール植田');
     });
 
     test('ハイフン区切りとゼロ埋めなしの日付を正規化する', () => {
@@ -45,8 +42,6 @@ describe('parseThreadName', () => {
     test('施設名にアンダースコアが含まれても最初の区切りで分割する', () => {
         const result = parseThreadName('2026.07.28_A_B（C）');
         assert.equal(result?.facilityFull, 'A_B（C）');
-        assert.equal(result?.corporation, 'A_B');
-        assert.equal(result?.facility, 'C');
     });
 
     test('日付で始まらない名前は null', () => {
@@ -69,29 +64,6 @@ describe('parseThreadName', () => {
     });
 });
 
-describe('splitFacility', () => {
-    test('半角括弧にも対応する', () => {
-        assert.deepEqual(splitFacility('八事福祉会(八事苑)'), {
-            corporation: '八事福祉会',
-            facility: '八事苑',
-        });
-    });
-
-    test('括弧が閉じていない場合は分解しない', () => {
-        assert.deepEqual(splitFacility('八事福祉会（八事苑'), {
-            corporation: '八事福祉会（八事苑',
-            facility: null,
-        });
-    });
-
-    test('括弧の中身が空なら分解しない', () => {
-        assert.deepEqual(splitFacility('八事福祉会（）'), {
-            corporation: '八事福祉会（）',
-            facility: null,
-        });
-    });
-});
-
 describe('normalizeDate', () => {
     test('シート側の表記揺れを吸収する', () => {
         assert.equal(normalizeDate('2026.07.28'), '2026.07.28');
@@ -111,11 +83,31 @@ describe('getYear / buildBaseName', () => {
         assert.equal(getYear('2026.07.28'), '2026');
     });
 
-    test('ファイル名の土台を組み立てる', () => {
+    test('ファイル名の土台を組み立てる (日付はハイフン形式)', () => {
         assert.equal(
             buildBaseName('2026.07.28', '八事福祉会（八事苑デイサービスセンター）'),
-            '2026.07.28_八事福祉会（八事苑デイサービスセンター）'
+            '2026-07-28_八事福祉会（八事苑デイサービスセンター）'
         );
+    });
+
+    test('ファイル名にピリオドが残らない (拡張子の判定を壊さないため)', () => {
+        const base = buildBaseName('2026.07.28', 'ボンセジュール植田');
+        assert.equal(base.includes('.'), false);
+    });
+
+    test('日付をISO 8601形式に整形する', () => {
+        assert.equal(formatDateForFileName('2026.07.28'), '2026-07-28');
+        assert.equal(formatDateForFileName('2026.12.01'), '2026-12-01');
+    });
+
+    test('名前順に並べると日付順になる', () => {
+        const names = [
+            buildBaseName('2026.12.01', 'C'),
+            buildBaseName('2026.07.28', 'A'),
+            buildBaseName('2027.01.05', 'D'),
+            buildBaseName('2026.08.05', 'B'),
+        ].sort();
+        assert.deepEqual(names.map((n) => n.slice(-1)), ['A', 'B', 'C', 'D']);
     });
 });
 

@@ -17,7 +17,6 @@ import {
     isSetlistAnchorContent,
     normalizeDate,
     parseThreadName,
-    splitFacility,
 } from './setlistNaming.js';
 
 /**
@@ -48,9 +47,11 @@ export function getSetlistMode(): SetlistMode {
 /** 実施日・施設名の特定結果。 */
 interface ConcertContext {
     date: string | null;
+    /**
+     * 施設名。アンダーバー以降をまるごと保持する。
+     * 括弧は補足として使われているだけなので、法人名と施設名には分けない。
+     */
     facilityFull: string | null;
-    corporation: string | null;
-    facility: string | null;
     /** どこから特定できたか (ログ用) */
     source: string;
 }
@@ -140,12 +141,7 @@ async function resolveConcertContext(thread: ThreadChannel): Promise<ConcertCont
             const date = normalizeDate(concert.concertDate ?? '');
             const facilityFull = concert.facilityName?.trim() || null;
             if (date && facilityFull) {
-                return {
-                    date,
-                    facilityFull,
-                    ...splitFacility(facilityFull),
-                    source: 'ConcertThreads シート',
-                };
+                return { date, facilityFull, source: 'ConcertThreads シート' };
             }
             console.warn(
                 `⚠️ [曲目リスト] シートに行はありましたが日付/施設名が不完全です ` +
@@ -161,13 +157,11 @@ async function resolveConcertContext(thread: ThreadChannel): Promise<ConcertCont
         return {
             date: parsed.date,
             facilityFull: parsed.facilityFull,
-            corporation: parsed.corporation,
-            facility: parsed.facility,
             source: 'スレッド名のパース',
         };
     }
 
-    return { date: null, facilityFull: null, corporation: null, facility: null, source: '特定できず' };
+    return { date: null, facilityFull: null, source: '特定できず' };
 }
 
 /** 保存先フォルダを解決します。日付を特定できない場合は _未分類 へ退避します。 */
@@ -232,8 +226,7 @@ function logDetection(
     lines.push(`   投稿者   : ${message.author.tag}`);
     lines.push(`   取得元   : ${context.source}`);
     lines.push(`   日付     : ${context.date ?? '(特定できず)'}`);
-    lines.push(`   法人名   : ${context.corporation ?? '(特定できず)'}`);
-    lines.push(`   施設名   : ${context.facility ?? '(括弧なし / 特定できず)'}`);
+    lines.push(`   施設名   : ${context.facilityFull ?? '(特定できず)'}`);
     lines.push(`   添付     : ${accepted.length + rejected.length} 件 (対象 ${accepted.length} / 対象外 ${rejected.length})`);
 
     if (!context.date) {
