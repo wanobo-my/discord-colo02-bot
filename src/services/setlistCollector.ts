@@ -30,7 +30,13 @@ import {
  */
 export type SetlistMode = 'off' | 'dryrun' | 'on';
 
-/** 処理済みの目印。人が外せば再処理される (運用上「もう一度やって」の意味になる)。 */
+/**
+ * 処理済みの目印。
+ *
+ * ✅ を外しても自動では再処理されない (リアクション削除の検知は運用上不要と判断して未実装)。
+ * ただし ✅ が無いメッセージは「未処理」とみなすため、
+ * scripts/reprocess-setlist-message.ts やバックフィルから再処理すれば取り込める。
+ */
 const CHECK_EMOJI = '✅';
 
 export function getSetlistMode(): SetlistMode {
