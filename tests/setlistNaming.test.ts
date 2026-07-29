@@ -127,10 +127,22 @@ describe('parseSetlistFileName', () => {
         assert.equal(parsed?.index, 12);
     });
 
-    test('命名規則に合わないファイルは null', () => {
+    test('連番が無いファイルも受け付ける (手作業で整理された分)', () => {
+        assert.deepEqual(parseSetlistFileName('2026-06-15_リレ石川橋.jpeg'), {
+            date: '2026.06.15',
+            facilityFull: 'リレ石川橋',
+            index: 0,
+        });
+    });
+
+    test('拡張子が大文字でも扱える', () => {
+        assert.equal(parseSetlistFileName('2026-07-20_ライフケア久方.PNG')?.facilityFull, 'ライフケア久方');
+    });
+
+    test('日付で始まらないファイルは null', () => {
         assert.equal(parseSetlistFileName('未分類_1531884292546891846_01.png'), null);
         assert.equal(parseSetlistFileName('IMG_1234.jpg'), null);
-        assert.equal(parseSetlistFileName('2026-07-28_施設名.jpg'), null); // 連番なし
+        assert.equal(parseSetlistFileName('2026-13-01_施設名_01.jpg'), null); // 存在しない月
     });
 });
 
