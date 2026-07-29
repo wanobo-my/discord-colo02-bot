@@ -1,8 +1,14 @@
-import { Message, ThreadChannel } from 'discord.js';
+import { Attachment, Message, ThreadChannel } from 'discord.js';
 import { getConcertThreadByThreadId } from './concertService.js';
-import { SETLIST_FOLDER_NAME } from '../utils/googleDrive.js';
 import {
-    AttachmentLike,
+    SETLIST_FOLDER_NAME,
+    buildUniqueFileName,
+    fetchAttachmentStream,
+    resolveSetlistFolder,
+    resolveSetlistSubFolder,
+    uploadStream,
+} from '../utils/googleDrive.js';
+import {
     UNCLASSIFIED_FOLDER_NAME,
     buildBaseName,
     classifyAttachment,
@@ -19,10 +25,13 @@ import {
  *
  * 動作モードは環境変数 SETLIST_MODE で切り替えます。
  *   off    … 何もしない (既定値。設定しなければ既存の挙動と一切変わりません)
- *   dryrun … 検知してログを出すだけ。Drive へは書き込みません (フェーズ3)
- *   on     … 実際に Drive へアップロードします (フェーズ4で実装)
+ *   dryrun … 検知してログを出すだけ。Drive へは書き込みません
+ *   on     … 実際に Drive へアップロードし、処理済みの目印に ✅ を付けます
  */
 export type SetlistMode = 'off' | 'dryrun' | 'on';
+
+/** 処理済みの目印。人が外せば再処理される (運用上「もう一度やって」の意味になる)。 */
+const CHECK_EMOJI = '✅';
 
 export function getSetlistMode(): SetlistMode {
     const raw = (process.env.SETLIST_MODE ?? 'off').trim().toLowerCase();
@@ -40,8 +49,19 @@ interface ConcertContext {
     source: string;
 }
 
+interface AcceptedAttachment {
+    attachment: Attachment;
+    extension: string;
+    mimeType: string;
+}
+
+interface RejectedAttachment {
+    name: string;
+    reason: string;
+}
+
 /**
- * メッセージが曲目リストの回収対象かを判定します。
+ * メッセージが曲目リストの回収対象かを判定し、対象ならスレッドを返します。
  *
  * 対象の条件:
  *   1. bot 以外の投稿である
@@ -49,8 +69,6 @@ interface ConcertContext {
  *   3. 何かへの「返信」である
  *   4. コンサートフォーラム配下のスレッドである
  *   5. 返信先が bot の「曲目リスト」案内メッセージである
- *
- * 対象外なら null を返します (静かに無視する)。
  */
 async function resolveAnchor(message: Message): Promise<ThreadChannel | null> {
     if (message.author.bot) return null;
@@ -75,11 +93,31 @@ async function resolveAnchor(message: Message): Promise<ThreadChannel | null> {
     });
     if (!anchor) return null;
 
-    // bot 自身が投稿した「曲目リスト」を含むメッセージへの返信だけを対象にする
     if (anchor.author.id !== message.client.user?.id) return null;
     if (!isSetlistAnchorContent(anchor.content)) return null;
 
     return channel;
+}
+
+/**
+ * 既に bot が ✅ を付けているか (＝処理済みか) を判定します。
+ *
+ * これが冪等性の要です。同じメッセージを二度処理してもファイルが重複しません。
+ */
+async function hasBotCheckmark(message: Message): Promise<boolean> {
+    const reaction = message.reactions.cache.get(CHECK_EMOJI);
+    if (!reaction) return false;
+    if (reaction.me) return true;
+
+    // キャッシュに自分の反応が反映されていない場合は問い合わせる
+    try {
+        const users = await reaction.users.fetch();
+        return users.has(message.client.user!.id);
+    } catch (error: any) {
+        console.warn(`⚠️ [曲目リスト] リアクションの確認に失敗しました: ${error.message}`);
+        // 判断できない場合は「未処理」とみなさず、安全側 (二重アップロードを避ける) に倒す
+        return true;
+    }
 }
 
 /**
@@ -109,7 +147,6 @@ async function resolveConcertContext(thread: ThreadChannel): Promise<ConcertCont
             );
         }
     } catch (error: any) {
-        // シートが引けなくても処理を止めず、スレッド名へフォールバックする
         console.error(`❌ [曲目リスト] ConcertThreads の参照に失敗しました: ${error.message}`);
     }
 
@@ -127,60 +164,199 @@ async function resolveConcertContext(thread: ThreadChannel): Promise<ConcertCont
     return { date: null, facilityFull: null, corporation: null, facility: null, source: '特定できず' };
 }
 
+/** 保存先フォルダを解決します。日付を特定できない場合は _未分類 へ退避します。 */
+async function resolveTargetFolder(context: ConcertContext): Promise<string> {
+    if (!context.date) {
+        return resolveSetlistSubFolder(UNCLASSIFIED_FOLDER_NAME);
+    }
+    return resolveSetlistFolder(getYear(context.date));
+}
+
+/** 連番を除いたファイル名の土台を返します。 */
+function baseNameFor(context: ConcertContext, thread: ThreadChannel): string {
+    if (context.date && context.facilityFull) {
+        return buildBaseName(context.date, context.facilityFull);
+    }
+    // 未分類でも取り違えが起きないようスレッドIDを付ける
+    return `未分類_${thread.id}`;
+}
+
 /** ログ表示用に、保存予定の Drive 上のパスを組み立てます。 */
 function buildPlannedPath(context: ConcertContext, fileName: string): string {
-    if (!context.date) {
-        return `${SETLIST_FOLDER_NAME}/${UNCLASSIFIED_FOLDER_NAME}/${fileName}`;
-    }
-    return `${SETLIST_FOLDER_NAME}/${getYear(context.date)}/${fileName}`;
+    const sub = context.date ? getYear(context.date) : UNCLASSIFIED_FOLDER_NAME;
+    return `${SETLIST_FOLDER_NAME}/${sub}/${fileName}`;
 }
 
 /**
- * 添付の URL が生きているかを確認します。
+ * 添付を取得します。
  *
- * Discord の CDN URL は署名付きで有効期限があるため、失効していた場合は
- * メッセージを取得し直して新しい署名 URL を得るフォールバックを行います。
- * (フェーズ4の実アップロードでも同じ経路を使います)
+ * Discord の CDN URL は署名付きで有効期限があるため、失敗した場合は
+ * メッセージを取得し直して新しい署名 URL を得てから 1 回だけ再試行します。
  */
-async function checkAttachmentUrl(
-    message: Message,
-    attachmentId: string,
-    url: string
-): Promise<{ ok: boolean; detail: string }> {
-    const head = async (target: string) => {
-        try {
-            const res = await fetch(target, { method: 'HEAD' });
-            return { ok: res.ok, status: res.status };
-        } catch (error: any) {
-            return { ok: false, status: -1, error: error.message as string };
+async function openAttachmentStream(message: Message, attachment: Attachment) {
+    try {
+        return await fetchAttachmentStream(attachment.url);
+    } catch (error: any) {
+        console.warn(
+            `⚠️ [曲目リスト] 添付の取得に失敗しました (${error.message})。` +
+            `CDN URL の失効を疑い、メッセージを取り直して再試行します。`
+        );
+
+        const refreshed = await message.fetch(true);
+        const fresh = refreshed.attachments.get(attachment.id);
+        if (!fresh) {
+            throw new Error('メッセージを取り直しましたが、対象の添付が見つかりませんでした。');
         }
-    };
+        return await fetchAttachmentStream(fresh.url);
+    }
+}
 
-    const first = await head(url);
-    if (first.ok) return { ok: true, detail: '取得可能' };
+/** 検知内容をログに出します (dry-run / 本番の両方で共通)。 */
+function logDetection(
+    mode: SetlistMode,
+    thread: ThreadChannel,
+    message: Message,
+    context: ConcertContext,
+    accepted: AcceptedAttachment[],
+    rejected: RejectedAttachment[]
+): void {
+    const lines: string[] = [];
+    lines.push(`📋 [曲目リスト][${mode === 'dryrun' ? 'DRY-RUN' : '本番'}] 対象を検知しました`);
+    lines.push(`   スレッド : ${thread.name}  (ID: ${thread.id})`);
+    lines.push(`   投稿者   : ${message.author.tag}`);
+    lines.push(`   取得元   : ${context.source}`);
+    lines.push(`   日付     : ${context.date ?? '(特定できず)'}`);
+    lines.push(`   法人名   : ${context.corporation ?? '(特定できず)'}`);
+    lines.push(`   施設名   : ${context.facility ?? '(括弧なし / 特定できず)'}`);
+    lines.push(`   添付     : ${accepted.length + rejected.length} 件 (対象 ${accepted.length} / 対象外 ${rejected.length})`);
 
-    console.warn(
-        `⚠️ [曲目リスト] CDN URL が使えませんでした (HTTP ${first.status})。メッセージを取り直します。`
-    );
+    if (!context.date) {
+        lines.push(`   ⚠️ 日付・施設名を特定できないため ${UNCLASSIFIED_FOLDER_NAME}/ へ退避します。`);
+    }
+    for (const item of rejected) {
+        lines.push(`   [${item.name}] ⏭️ 対象外: ${item.reason}`);
+    }
 
-    // 署名付き URL を再取得する
-    const refreshed = await message.fetch(true).catch((error: any) => {
-        console.error(`❌ [曲目リスト] メッセージの再取得に失敗しました: ${error.message}`);
-        return null;
+    console.log(lines.join('\n'));
+}
+
+/** dry-run: 保存予定のパスとファイル名を出力します (Drive には触れません)。 */
+function logDryRunPlan(
+    thread: ThreadChannel,
+    context: ConcertContext,
+    accepted: AcceptedAttachment[]
+): void {
+    const baseName = baseNameFor(context, thread);
+    const lines: string[] = [];
+
+    // 連番は Drive の既存ファイルを見て決まるため、dry-run では 01 からの仮番号を表示する
+    accepted.forEach((item, index) => {
+        const fileName = `${baseName}_${String(index + 1).padStart(2, '0')}${item.extension}`;
+        lines.push(`   [${item.attachment.name}] ${formatBytes(item.attachment.size)} / ${item.mimeType}`);
+        lines.push(`      保存予定: ${buildPlannedPath(context, fileName)}`);
     });
-    if (!refreshed) {
-        return { ok: false, detail: `取得不可 (HTTP ${first.status}) / メッセージ再取得も失敗` };
+
+    lines.push('   ※ DRY-RUN のため、Drive への書き込みと ✅ リアクションは行いません。');
+    console.log(lines.join('\n'));
+}
+
+interface UploadOutcome {
+    succeeded: { originalName: string; savedName: string; link: string | null }[];
+    failed: { originalName: string; reason: string }[];
+}
+
+/**
+ * 実際に Drive へアップロードします。
+ *
+ * ファイル名の連番は Drive の既存ファイルを見て決めるため、**必ず 1 件ずつ順番に**処理します。
+ * 並列にすると同じ連番が割り当てられ、片方が別名で保存されるなどの取り違えが起きます。
+ */
+async function uploadAll(
+    message: Message,
+    thread: ThreadChannel,
+    context: ConcertContext,
+    accepted: AcceptedAttachment[]
+): Promise<UploadOutcome> {
+    const outcome: UploadOutcome = { succeeded: [], failed: [] };
+    if (accepted.length === 0) return outcome;
+
+    const folderId = await resolveTargetFolder(context);
+    const baseName = baseNameFor(context, thread);
+
+    for (const item of accepted) {
+        try {
+            const fileName = await buildUniqueFileName(folderId, baseName, item.extension);
+            const { stream } = await openAttachmentStream(message, item.attachment);
+            const uploaded = await uploadStream({
+                folderId,
+                fileName,
+                mimeType: item.mimeType,
+                stream,
+            });
+            outcome.succeeded.push({
+                originalName: item.attachment.name,
+                savedName: uploaded.name,
+                link: uploaded.webViewLink,
+            });
+        } catch (error: any) {
+            // 1 件失敗しても残りは処理する。失敗は必ず記録する。
+            console.error(`❌ [曲目リスト] アップロード失敗 (${item.attachment.name}):`, error?.stack ?? error);
+            outcome.failed.push({ originalName: item.attachment.name, reason: error?.message ?? '不明なエラー' });
+        }
     }
 
-    const fresh = refreshed.attachments.get(attachmentId);
-    if (!fresh) {
-        return { ok: false, detail: `取得不可 (HTTP ${first.status}) / 再取得後に添付が見つからず` };
+    return outcome;
+}
+
+/**
+ * 利用者への報告を組み立てます。
+ *
+ * 全件成功した場合は ✅ リアクションだけで伝え、メッセージは投稿しません
+ * (スレッドが通知で埋まるのを避けるため)。
+ * 対象外ファイルや失敗があったときだけ返信します。
+ */
+function buildReport(outcome: UploadOutcome, rejected: RejectedAttachment[], unclassified: boolean): string | null {
+    const blocks: string[] = [];
+
+    if (outcome.failed.length > 0) {
+        blocks.push('⚠️ 曲目リストの保存に失敗したファイルがありマス🤖');
+        if (outcome.succeeded.length > 0) {
+            blocks.push(
+                '**保存できたもの**\n' +
+                outcome.succeeded.map((s) => `・${s.savedName}`).join('\n')
+            );
+        }
+        blocks.push(
+            '**保存できなかったもの**\n' +
+            outcome.failed.map((f) => `・${f.originalName} — ${f.reason}`).join('\n')
+        );
+        blocks.push('お手数デスが、保存できなかった分をもう一度送っていただけマスか？');
     }
 
-    const second = await head(fresh.url);
-    return second.ok
-        ? { ok: true, detail: 'URL 再取得により取得可能' }
-        : { ok: false, detail: `取得不可 (再取得後も HTTP ${second.status})` };
+    if (rejected.length > 0) {
+        blocks.push(
+            '📋 対象外のファイルがありマシタ（保存していマセン）\n' +
+            rejected.map((r) => `・${r.name} — ${r.reason}`).join('\n')
+        );
+    }
+
+    if (unclassified && outcome.succeeded.length > 0) {
+        blocks.push(
+            `⚠️ 実施日と施設名を特定できなかったので、いったん \`${UNCLASSIFIED_FOLDER_NAME}\` フォルダに保存しマシタ。\n` +
+            'スレッド名が「2026.07.28_施設名」の形式か確認してくださイ。'
+        );
+    }
+
+    return blocks.length > 0 ? blocks.join('\n\n') : null;
+}
+
+/** スレッドへの報告投稿。失敗してもログに残すだけで、処理は止めません。 */
+async function reportToThread(message: Message, content: string): Promise<void> {
+    try {
+        await message.reply({ content, allowedMentions: { repliedUser: false } });
+    } catch (error: any) {
+        console.error(`❌ [曲目リスト] スレッドへの報告に失敗しました: ${error.message}`);
+    }
 }
 
 /**
@@ -196,66 +372,63 @@ export async function handleSetlistMessage(message: Message): Promise<void> {
         const thread = await resolveAnchor(message);
         if (!thread) return;
 
-        const context = await resolveConcertContext(thread);
-        const attachments = [...message.attachments.values()];
-
-        const lines: string[] = [];
-        lines.push(`📋 [曲目リスト][${mode === 'dryrun' ? 'DRY-RUN' : '本番'}] 対象を検知しました`);
-        lines.push(`   スレッド : ${thread.name}  (ID: ${thread.id})`);
-        lines.push(`   投稿者   : ${message.author.tag}`);
-        lines.push(`   取得元   : ${context.source}`);
-        lines.push(`   日付     : ${context.date ?? '(特定できず)'}`);
-        lines.push(`   法人名   : ${context.corporation ?? '(特定できず)'}`);
-        lines.push(`   施設名   : ${context.facility ?? '(括弧なし / 特定できず)'}`);
-        lines.push(`   添付     : ${attachments.length} 件`);
-
-        if (!context.date) {
-            lines.push(`   ⚠️ 日付・施設名を特定できないため ${UNCLASSIFIED_FOLDER_NAME}/ へ退避する対象です。`);
+        // 冪等性: 既に処理済みなら何もしない
+        if (await hasBotCheckmark(message)) {
+            console.log(`ℹ️ [曲目リスト] 既に ${CHECK_EMOJI} が付いているためスキップします (message: ${message.id})`);
+            return;
         }
 
-        // 連番は Drive の既存ファイルを見て決まるため、dry-run では 01 からの仮番号を表示する
-        let sequence = 0;
-        for (const attachment of attachments) {
-            const like: AttachmentLike = {
+        const context = await resolveConcertContext(thread);
+
+        const accepted: AcceptedAttachment[] = [];
+        const rejected: RejectedAttachment[] = [];
+
+        for (const attachment of message.attachments.values()) {
+            const verdict = classifyAttachment({
                 name: attachment.name,
                 size: attachment.size,
                 contentType: attachment.contentType,
-            };
-            const verdict = classifyAttachment(like);
-            const header = `   [${attachment.name}] ${formatBytes(attachment.size)} / ${attachment.contentType ?? 'MIME不明'}`;
-
-            if (!verdict.accepted) {
-                lines.push(`${header}\n      ⏭️  対象外: ${verdict.reason}`);
-                continue;
+            });
+            if (verdict.accepted) {
+                accepted.push({ attachment, extension: verdict.extension, mimeType: verdict.mimeType });
+            } else {
+                rejected.push({ name: attachment.name, reason: verdict.reason });
             }
-
-            sequence += 1;
-            const baseName = context.date && context.facilityFull
-                ? buildBaseName(context.date, context.facilityFull)
-                : `未分類_${thread.id}`;
-            const fileName = `${baseName}_${String(sequence).padStart(2, '0')}${verdict.extension}`;
-
-            const urlCheck = await checkAttachmentUrl(message, attachment.id, attachment.url);
-
-            lines.push(header);
-            lines.push(`      保存予定: ${buildPlannedPath(context, fileName)}`);
-            lines.push(`      MIME    : ${verdict.mimeType}`);
-            lines.push(`      URL確認 : ${urlCheck.ok ? '✅' : '❌'} ${urlCheck.detail}`);
         }
 
-        if (sequence === 0) {
-            lines.push('   ⚠️ 回収対象の添付がありませんでした。');
+        logDetection(mode, thread, message, context, accepted, rejected);
+
+        if (mode === 'dryrun') {
+            logDryRunPlan(thread, context, accepted);
+            return;
         }
 
-        lines.push(
-            mode === 'dryrun'
-                ? '   ※ DRY-RUN のため、Drive への書き込みと ✅ リアクションは行いません。'
-                : '   ※ 本番モードの実処理はフェーズ4で実装します。'
-        );
+        // ===== ここから本番モード =====
+        const outcome = await uploadAll(message, thread, context, accepted);
 
-        console.log(lines.join('\n'));
+        for (const item of outcome.succeeded) {
+            console.log(`✅ [曲目リスト] 保存しました: ${item.savedName}  ${item.link ?? ''}`);
+        }
+
+        // 全添付を処理し終えてから、かつ 1 件も失敗していない場合だけ ✅ を付ける。
+        // 部分的に失敗した状態で ✅ を付けると、再送しても処理されなくなるため。
+        if (accepted.length > 0 && outcome.failed.length === 0) {
+            try {
+                await message.react(CHECK_EMOJI);
+            } catch (error: any) {
+                console.error(`❌ [曲目リスト] ${CHECK_EMOJI} の付与に失敗しました: ${error.message}`);
+            }
+        }
+
+        const report = buildReport(outcome, rejected, !context.date);
+        if (report) {
+            await reportToThread(message, report);
+        }
     } catch (error: any) {
-        // エラーは握り潰さない。ただし bot 全体は落とさない。
-        console.error('❌ [曲目リスト] 検知処理でエラーが発生しました:', error?.stack ?? error);
+        console.error('❌ [曲目リスト] 処理でエラーが発生しました:', error?.stack ?? error);
+        await reportToThread(
+            message,
+            '⚠️ 曲目リストの保存中にエラーが発生しマシタ🤖 運営に確認をお願いしマス。'
+        ).catch(() => undefined);
     }
 }

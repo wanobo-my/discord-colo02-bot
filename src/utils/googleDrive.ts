@@ -131,13 +131,21 @@ export async function ensureFolder(name: string, parentId: string): Promise<stri
  * 途中のフォルダが存在しない場合は自動で作成します。
  */
 export async function resolveSetlistFolder(year: string): Promise<string> {
+    return resolveSetlistSubFolder(year);
+}
+
+/**
+ * 曲目リストフォルダ直下の任意のサブフォルダを解決します。
+ * 年フォルダのほか、日付を特定できなかった場合の退避先 (_未分類) にも使います。
+ */
+export async function resolveSetlistSubFolder(name: string): Promise<string> {
     const rootId = process.env.SETLIST_ROOT_FOLDER_ID;
     if (!rootId) {
         throw new Error('❌ [Drive] 環境変数 SETLIST_ROOT_FOLDER_ID が設定されていません。');
     }
 
     const setlistFolderId = await ensureFolder(SETLIST_FOLDER_NAME, rootId);
-    return ensureFolder(year, setlistFolderId);
+    return ensureFolder(name, setlistFolderId);
 }
 
 /**
