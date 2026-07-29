@@ -92,6 +92,66 @@ export function buildBaseName(date: string, facilityFull: string): string {
     return `${formatDateForFileName(date)}_${facilityFull.trim()}`;
 }
 
+export interface ParsedSetlistFileName {
+    /** ファイル名に埋め込まれた実施日 (YYYY.MM.DD に戻したもの) */
+    date: string;
+    /** ファイル名に埋め込まれた施設名 */
+    facilityFull: string;
+    /** 連番 */
+    index: number;
+}
+
+// 2026-07-28_八事福祉会（八事苑デイサービスセンター）_01.jpg
+// 施設名にアンダースコアが含まれてもよいよう、末尾の「_連番.拡張子」を優先して切り出す。
+const SETLIST_FILE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})_(.+)_(\d+)\.[^.]+$/;
+
+/**
+ * 保存済みファイルの名前から、実施日・施設名・連番を取り出します。
+ * 曲目リストの命名規則に合致しない場合は null を返します (_未分類 のファイルなど)。
+ */
+export function parseSetlistFileName(fileName: string): ParsedSetlistFileName | null {
+    const matched = fileName.match(SETLIST_FILE_PATTERN);
+    if (!matched) return null;
+
+    const date = buildDate(matched[1], matched[2], matched[3]);
+    if (!date) return null;
+
+    return {
+        date,
+        facilityFull: matched[4],
+        index: Number(matched[5]),
+    };
+}
+
+/**
+ * 施設名を照合用に正規化します。
+ *
+ * 全角/半角の揺れ、括弧、空白を吸収します。
+ * 例: 「八事福祉会（八事苑デイサービスセンター）」→「八事福祉会八事苑デイサービスセンター」
+ */
+export function normalizeFacilityForMatch(value: string): string {
+    return value
+        .normalize('NFKC')
+        .replace(/[()\[\]{}【】「」『』]/g, '')
+        .replace(/\s/g, '')
+        .toLowerCase();
+}
+
+/**
+ * 2つの施設名が同じ施設を指しているとみなせるかを判定します。
+ *
+ * 回答シートとスレッド名では表記が一致しません。しかも、
+ * どちらが詳しいかも一定ではないため、**双方向**の包含関係で判定します。
+ *   シートが短い例: 「八事福祉会」          / スレッド「八事福祉会（八事苑デイサービスセンター）」
+ *   シートが長い例: 「エクセレント天白ガーデンヒルズ」 / スレッド「エクセレント天白ガーデン」
+ */
+export function facilityMatches(a: string, b: string): boolean {
+    const x = normalizeFacilityForMatch(a);
+    const y = normalizeFacilityForMatch(b);
+    if (!x || !y) return false;
+    return x.includes(y) || y.includes(x);
+}
+
 /** bot のメッセージが「曲目リストの受付メッセージ」かどうかを判定します。 */
 export function isSetlistAnchorContent(content: string): boolean {
     return content.includes('曲目リスト');
