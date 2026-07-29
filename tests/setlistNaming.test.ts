@@ -17,7 +17,9 @@ import {
     getYear,
     isSetlistAnchorContent,
     normalizeDate,
+    facilityMatches,
     formatDateForFileName,
+    parseSetlistFileName,
     parseThreadName,
 } from '../src/services/setlistNaming.js';
 
@@ -108,6 +110,52 @@ describe('getYear / buildBaseName', () => {
             buildBaseName('2026.08.05', 'B'),
         ].sort();
         assert.deepEqual(names.map((n) => n.slice(-1)), ['A', 'B', 'C', 'D']);
+    });
+});
+
+describe('parseSetlistFileName', () => {
+    test('保存済みファイル名から実施日・施設名・連番を取り出す', () => {
+        assert.deepEqual(
+            parseSetlistFileName('2026-07-28_八事福祉会（八事苑デイサービスセンター）_01.jpg'),
+            { date: '2026.07.28', facilityFull: '八事福祉会（八事苑デイサービスセンター）', index: 1 }
+        );
+    });
+
+    test('施設名にアンダースコアが含まれても末尾の連番で切り出す', () => {
+        const parsed = parseSetlistFileName('2026-07-28_A_B_12.png');
+        assert.equal(parsed?.facilityFull, 'A_B');
+        assert.equal(parsed?.index, 12);
+    });
+
+    test('命名規則に合わないファイルは null', () => {
+        assert.equal(parseSetlistFileName('未分類_1531884292546891846_01.png'), null);
+        assert.equal(parseSetlistFileName('IMG_1234.jpg'), null);
+        assert.equal(parseSetlistFileName('2026-07-28_施設名.jpg'), null); // 連番なし
+    });
+});
+
+describe('facilityMatches', () => {
+    // 回答シートとスレッド名では表記が一致しない。実データで確認した2パターンを固定する。
+    test('シート側が短い場合に一致する', () => {
+        assert.equal(facilityMatches('八事福祉会', '八事福祉会（八事苑デイサービスセンター）'), true);
+    });
+
+    test('シート側が長い場合にも一致する', () => {
+        assert.equal(facilityMatches('エクセレント天白ガーデンヒルズ', 'エクセレント天白ガーデン'), true);
+    });
+
+    test('全角半角や空白の揺れを吸収する', () => {
+        assert.equal(facilityMatches('ボンセジュール 植田', 'ボンセジュール植田'), true);
+        assert.equal(facilityMatches('リレ石川橋', 'リレ石川橋（デイ)'), true);
+    });
+
+    test('無関係な施設は一致しない', () => {
+        assert.equal(facilityMatches('八事福祉会', 'ボンセジュール植田'), false);
+    });
+
+    test('空文字は一致扱いにしない', () => {
+        assert.equal(facilityMatches('', '八事福祉会'), false);
+        assert.equal(facilityMatches('八事福祉会', '   '), false);
     });
 });
 

@@ -12,6 +12,7 @@ import { getAllConcertThreads, updateConcertThread } from './services/concertSer
 import { checkIncompleteUsers, generateTallyEmbed, USER_MAP } from './commands/schedule.js';
 import { toJstIsoString, getJstNow } from './utils/date.js';
 import { handleSetlistMessage, getSetlistMode } from './services/setlistCollector.js';
+import { backfillSetlistUrls } from './services/setlistSheetLink.js';
 
 dotenv.config();
 
@@ -236,6 +237,20 @@ TimeTreeの予定をスプレッドシートに転記シマショウ⚡️
 scheduleJob("0 * * * *", async () => {
     console.log("⏰ [cron] 自動ジョブの巡回を開始します...");
     await processReminderJobs();
+
+    // 曲目リストのURLを回答シートへ後追いで反映する。
+    // アップロード時にフォームが未提出だった分をここで拾う。
+    try {
+        const summary = await backfillSetlistUrls();
+        if (summary.targeted > 0) {
+            console.log(
+                `📝 [cron] 曲目リストURLの反映: 対象 ${summary.targeted} 件 / ` +
+                `記入 ${summary.written} / 該当ファイルなし ${summary.noFile} / 見送り ${summary.skipped}`
+            );
+        }
+    } catch (error: any) {
+        console.error("❌ [cron] 曲目リストURLの反映でエラー:", error?.message ?? error);
+    }
 }, {
     timezone: "Asia/Tokyo"
 });

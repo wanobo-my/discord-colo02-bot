@@ -149,6 +149,75 @@ export async function resolveSetlistSubFolder(name: string): Promise<string> {
 }
 
 /**
+ * フォルダを探します。**存在しない場合も作成せず** null を返します。
+ *
+ * 読み取り目的の処理 (回答シートへの後追い書き込みなど) で使います。
+ * ensureFolder を使うと、まだ何も保存していない年のフォルダを
+ * 無駄に作ってしまうためです。
+ */
+export async function findFolder(name: string, parentId: string): Promise<string | null> {
+    const drive = getSetlistDrive();
+    const safeName = sanitizeFileName(name);
+
+    const q = [
+        `name = '${escapeForQuery(safeName)}'`,
+        `mimeType = '${FOLDER_MIME}'`,
+        `'${escapeForQuery(parentId)}' in parents`,
+        'trashed = false',
+    ].join(' and ');
+
+    const found = await drive.files.list({ q, fields: 'files(id)', pageSize: 1 });
+    return found.data.files?.[0]?.id ?? null;
+}
+
+/** 曲目リストフォルダ直下のサブフォルダを、作成せずに探します。 */
+export async function findSetlistSubFolder(name: string): Promise<string | null> {
+    const rootId = process.env.SETLIST_ROOT_FOLDER_ID;
+    if (!rootId) {
+        throw new Error('❌ [Drive] 環境変数 SETLIST_ROOT_FOLDER_ID が設定されていません。');
+    }
+
+    const setlistFolderId = await findFolder(SETLIST_FOLDER_NAME, rootId);
+    if (!setlistFolderId) return null;
+
+    return findFolder(name, setlistFolderId);
+}
+
+export interface DriveFileSummary {
+    id: string;
+    name: string;
+    webViewLink: string | null;
+}
+
+/** フォルダ内から、指定した文字列で始まる名前のファイルを列挙します。 */
+export async function listFilesByPrefix(folderId: string, prefix: string): Promise<DriveFileSummary[]> {
+    const drive = getSetlistDrive();
+
+    const q = [
+        `name contains '${escapeForQuery(prefix)}'`,
+        `'${escapeForQuery(folderId)}' in parents`,
+        `mimeType != '${FOLDER_MIME}'`,
+        'trashed = false',
+    ].join(' and ');
+
+    const res = await drive.files.list({
+        q,
+        fields: 'files(id, name, webViewLink)',
+        pageSize: 1000,
+        orderBy: 'name',
+    });
+
+    // Drive の contains は前方一致ではないため、前方一致は自前で絞り込む
+    return (res.data.files ?? [])
+        .filter((file) => (file.name ?? '').startsWith(prefix))
+        .map((file) => ({
+            id: file.id!,
+            name: file.name ?? '',
+            webViewLink: file.webViewLink ?? null,
+        }));
+}
+
+/**
  * フォルダ内の既存ファイルを見て、重複しない連番付きファイル名を組み立てます。
  *
  * 既存ファイルを上書きしないことを最優先にしており、

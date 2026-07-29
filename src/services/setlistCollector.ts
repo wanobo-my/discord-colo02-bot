@@ -1,5 +1,6 @@
 import { Attachment, Message, ThreadChannel } from 'discord.js';
 import { getConcertThreadByThreadId } from './concertService.js';
+import { linkSetlistUrlNow } from './setlistSheetLink.js';
 import {
     SETLIST_FOLDER_NAME,
     buildUniqueFileName,
@@ -407,6 +408,13 @@ export async function handleSetlistMessage(message: Message): Promise<void> {
 
         for (const item of outcome.succeeded) {
             console.log(`✅ [曲目リスト] 保存しました: ${item.savedName}  ${item.link ?? ''}`);
+        }
+
+        // 回答シートへ URL を反映する (1枚目のみ。回答が未提出なら後追いで拾われる)。
+        // 失敗してもアップロード自体は成功しているため、処理は止めない。
+        const firstLink = outcome.succeeded.find((item) => item.link)?.link;
+        if (firstLink && context.date && context.facilityFull) {
+            await linkSetlistUrlNow(context.date, context.facilityFull, firstLink);
         }
 
         // 全添付を処理し終えてから、かつ 1 件も失敗していない場合だけ ✅ を付ける。
