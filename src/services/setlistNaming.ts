@@ -12,17 +12,16 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** 日付・施設名を特定できなかった場合の退避先フォルダ名。 */
 export const UNCLASSIFIED_FOLDER_NAME = '_未分類';
 
-export interface FacilityParts {
-    /** 法人名 (括弧の前)。括弧が無い場合は全体。 */
-    corporation: string;
-    /** 施設名 (括弧の中)。括弧が無い場合は null。 */
-    facility: string | null;
-}
-
-export interface ParsedThreadName extends FacilityParts {
+export interface ParsedThreadName {
     /** YYYY.MM.DD 形式に正規化した実施日 */
     date: string;
-    /** スレッド名から取り出した施設表記そのまま (例: 八事福祉会（八事苑デイサービスセンター）) */
+    /**
+     * アンダーバー以降をまるごと施設名として扱った文字列。
+     * 例: 八事福祉会（八事苑デイサービスセンター）
+     *
+     * 括弧は補足として使われているだけで法人名と施設名を分ける意味は無い、という
+     * 運用実態にもとづき、分割せずそのまま扱う。
+     */
     facilityFull: string;
 }
 
@@ -49,19 +48,8 @@ function buildDate(year: string, month: string, day: string): string | null {
 }
 
 /**
- * 「八事福祉会（八事苑デイサービスセンター）」を法人名と施設名に分解します。
- * 全角・半角どちらの括弧にも対応します。括弧が無い場合は施設名を null にします。
- */
-export function splitFacility(facilityFull: string): FacilityParts {
-    const matched = facilityFull.trim().match(/^(.+?)[（(]([^（()）]*)[）)]$/);
-    if (!matched || !matched[1].trim() || !matched[2].trim()) {
-        return { corporation: facilityFull.trim(), facility: null };
-    }
-    return { corporation: matched[1].trim(), facility: matched[2].trim() };
-}
-
-/**
  * スレッド名を「YYYY.MM.DD_施設名」として解釈します。
+ * アンダーバー以降はすべて施設名として扱います。
  * 解釈できない場合は null を返します (呼び出し側で _未分類 へ退避する)。
  */
 export function parseThreadName(name: string): ParsedThreadName | null {
@@ -74,7 +62,7 @@ export function parseThreadName(name: string): ParsedThreadName | null {
     const facilityFull = matched[4].trim();
     if (!facilityFull) return null;
 
-    return { date, facilityFull, ...splitFacility(facilityFull) };
+    return { date, facilityFull };
 }
 
 /** 「2026.07.28」から年 (「2026」) を取り出します。 */
@@ -83,11 +71,26 @@ export function getYear(date: string): string {
 }
 
 /**
+ * ファイル名用に日付を整形します。「2026.07.28」→「2026-0728」
+ *
+ * ⚠️ ファイル名にピリオドが入らないようにするための整形です。
+ *    拡張子以外にピリオドがあると、「最初のピリオドまでを名前とみなす」
+ *    ような素朴な処理でファイル名が壊れることがあるためです。
+ *    (フォルダ名やスレッド名、シートの表記は従来どおりピリオド区切りのままです)
+ */
+export function formatDateForFileName(date: string): string {
+    const parts = date.split('.');
+    if (parts.length !== 3) return date.replace(/\./g, '-');
+    const [year, month, day] = parts;
+    return `${year}-${month}${day}`;
+}
+
+/**
  * 連番を除いたファイル名の土台を作ります。
- * 例: 2026.07.28_八事福祉会（八事苑デイサービスセンター）
+ * 例: 2026-0728_八事福祉会（八事苑デイサービスセンター）
  */
 export function buildBaseName(date: string, facilityFull: string): string {
-    return `${date}_${facilityFull.trim()}`;
+    return `${formatDateForFileName(date)}_${facilityFull.trim()}`;
 }
 
 /** bot のメッセージが「曲目リストの受付メッセージ」かどうかを判定します。 */
