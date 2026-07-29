@@ -370,20 +370,68 @@ client.once('ready', () => {
     console.log(`📋 曲目リストの回収モード: ${getSetlistMode()}  (off / dryrun / on)`);
 });
 
+// =====================================================
+// 🛡️ プロセス停止を防ぐための最終防衛線
+// =====================================================
+// EventEmitter は 'error' にリスナーが無いと例外を投げてプロセスを止める。
+// discord.js の Client も EventEmitter なので、必ずリスナーを付けておく。
+client.on('error', (error) => {
+    console.error('❌ Discord クライアントのエラー:', error);
+});
+
+client.on('shardError', (error) => {
+    console.error('❌ Gateway 接続のエラー:', error);
+});
+
+// どこでも捕捉されなかった Promise の拒否。
+// 記録は必ず残したうえで、bot は動かし続ける (常駐前提のため停止させない)。
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ 未処理の Promise 拒否:', reason);
+});
+
+/**
+ * インタラクション処理のエラーを、利用者への通知とログの両方に残します。
+ *
+ * ⚠️ 通知そのものが失敗しうる点が重要です (既に応答済み / 期限切れ / 二重起動など)。
+ *    その失敗を捕捉しないと未処理の Promise 拒否となり、Client の 'error' イベント経由で
+ *    bot のプロセスが停止します。実際に二重起動時の検証で停止を確認しました。
+ */
+async function notifyInteractionError(interaction: Interaction, error: unknown): Promise<void> {
+    // エラーは必ず記録する (握り潰さない)
+    console.error('❌ インタラクション処理でエラーが発生しました:', error);
+
+    if (!interaction.isRepliable()) return;
+
+    try {
+        const content = 'コマンド実行中にエラーが発生しました。';
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content, ephemeral: true });
+        } else {
+            await interaction.reply({ content, ephemeral: true });
+        }
+    } catch (notifyError) {
+        // 通知にも失敗した場合はログだけ残し、bot は動かし続ける
+        console.error('❌ エラー通知の送信にも失敗しました:', notifyError);
+    }
+}
+
 client.on('interactionCreate', async (interaction: Interaction) => {
     // ローカル検証時は本番botに処理を任せる。
     // 同じbotが二重に起動していると、先に応答した側が勝ち、もう一方は
     // 「Interaction has already been acknowledged」で失敗するため。
     if (LOCAL_DEV) return;
 
-    // 1. スラッシュコマンドの処理
-    if (interaction.isCommand()) {
-        const { commandName } = interaction;
+    // モーダル・セレクト・ボタンの処理も含めて全体を捕捉する。
+    // 以前はスラッシュコマンドにしか try/catch が無く、他の経路で例外が出ると
+    // 未処理の Promise 拒否となり bot が停止していた。
+    try {
+        // 1. スラッシュコマンドの処理
+        if (interaction.isCommand()) {
+            const { commandName } = interaction;
 
-        try {
             if (commandName === 'schedule') {
                 await scheduleCommand.execute(interaction);
-            } 
+            }
             else if (commandName === 'hello') {
                 await helloCommand.execute(interaction);
             }
@@ -393,39 +441,34 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             else if (commandName === 'concert') {
                 await concertCommand.execute(interaction);
             }
-        } catch (error) {
-            console.error(error);
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
-            } else {
-                await interaction.reply({ content: 'コマンド実行中にエラーが発生しました。', ephemeral: true });
+            return;
+        }
+
+        // 2. モーダル送信の処理
+        if (interaction.isModalSubmit()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleModalSubmit(interaction);
             }
+            return;
         }
-        return;
-    }
 
-    // 2. モーダル送信の処理
-    if (interaction.isModalSubmit()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleModalSubmit(interaction);
+        // 3. ユーザー選択メニューの処理
+        if (interaction.isUserSelectMenu()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleUserSelect(interaction);
+            }
+            return;
         }
-        return;
-    }
 
-    // 3. ユーザー選択メニューの処理
-    if (interaction.isUserSelectMenu()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleUserSelect(interaction);
+        // 4. ボタンクリックの処理
+        if (interaction.isButton()) {
+            if (interaction.customId.startsWith('concert_')) {
+                await concertCommand.handleButton(interaction);
+            }
+            return;
         }
-        return;
-    }
-
-    // 4. ボタンクリックの処理
-    if (interaction.isButton()) {
-        if (interaction.customId.startsWith('concert_')) {
-            await concertCommand.handleButton(interaction);
-        }
-        return;
+    } catch (error) {
+        await notifyInteractionError(interaction, error);
     }
 });
 // =====================================================
