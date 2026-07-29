@@ -744,13 +744,13 @@ async function syncThreadMessage(client: any, threadId: string): Promise<void> {
 /**
  * 指定されたスレッドへ活動記録フォームのリンクを自動投稿します。
  */
-export async function postActivityForm(thread: ThreadChannel): Promise<void> {
+export function buildActivityFormMessage(): string {
     const defaultUrl = 'https://docs.google.com/forms/d/e/1FAIpQLSdKkOzdnoQi8c8-nta7cvP0XiEEYzx-sRJd7cewetZKNJdgKA/viewform';
     const formUrl = process.env.ACTIVITY_FORM_URL || defaultUrl;
 
     // 「曲目リスト」の文字列は、このメッセージへの返信を回収対象と判定する目印も兼ねています。
     // 文面を変更する際も、この語は残してください (services/setlistCollector.ts を参照)。
-    const formMessage = `**🌷活動記録フォームのお願い**
+    return `**🌷活動記録フォームのお願い**
 今日もおつかれさまでした！
 ↓今後の活動報告や記録整理のためにフォーム入力お願いします！
 ${formUrl}
@@ -758,6 +758,10 @@ ${formUrl}
 **📋 曲目リストの画像はこちらへ**
 このメッセージに返信する形で画像を送ってください。coloが自動で保存しマス🤖
 -# 送り方：このメッセージを長押し →「返信」→ 画像を添付して送信。複数枚まとめてOKです！`;
+}
+
+export async function postActivityForm(thread: ThreadChannel): Promise<void> {
+    const formMessage = buildActivityFormMessage();
 
     await thread.send(formMessage);
     console.log(`✅ [Phase 3] スレッド ID: ${thread.id} に活動記録フォームを自動投稿しました。`);

@@ -21,14 +21,16 @@ const PORT = parseInt(process.env.PORT || '8000');
 // =====================================================
 // 🧪 ローカル検証モード
 // =====================================================
-// LOCAL_DEV=true のとき、定期実行 (cron) とメンションへのリアクションを無効化する。
+// LOCAL_DEV=true のとき、cron・メンション反応・インタラクション処理を無効化する。
 // Koyeb の本番 bot を止めずにローカルで起動すると同じ bot が二重に動き、
-// リアクションが 2 回付いたり定期処理が 2 回実行されたりするため、その防止用。
+// リアクションが 2 回付く、定期処理が 2 回走る、スラッシュコマンドの応答が競合して
+// 「Interaction has already been acknowledged」で落ちる、といった問題が起きるため。
 // 環境変数を設定しなければ従来どおり動作する (本番への影響なし)。
 const LOCAL_DEV = process.env.LOCAL_DEV === 'true';
 
 if (LOCAL_DEV) {
-    console.log('🧪 LOCAL_DEV=true: cron とメンション反応を無効化して起動します。');
+    console.log('🧪 LOCAL_DEV=true: cron / メンション反応 / インタラクション処理を無効化して起動します。');
+    console.log('   → ローカル起動中はスラッシュコマンドを使えません (本番botが処理します)。');
 }
 
 /**
@@ -369,6 +371,11 @@ client.once('ready', () => {
 });
 
 client.on('interactionCreate', async (interaction: Interaction) => {
+    // ローカル検証時は本番botに処理を任せる。
+    // 同じbotが二重に起動していると、先に応答した側が勝ち、もう一方は
+    // 「Interaction has already been acknowledged」で失敗するため。
+    if (LOCAL_DEV) return;
+
     // 1. スラッシュコマンドの処理
     if (interaction.isCommand()) {
         const { commandName } = interaction;
